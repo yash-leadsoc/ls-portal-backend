@@ -1,10 +1,18 @@
 const Question = require('../models/Question');
+const { buOf, seesAll, ownerScope } = require('../utils/scope');
 const Answer = require('../models/Answer');
+const User = require('../models/User');
+
+const {
+  createNotification,
+  notifyUsers,
+} = require('../services/pushNotification');
 const { logAudit } = require('../utils/audit');
-// GET /api/qa/questions  — list all questions (newest first) with answer counts
 exports.listQuestions = async (req, res) => {
   try {
-    const questions = await Question.find()
+    const _q = {};
+    if (!seesAll(req.user)) _q.businessUnit = buOf(req.user);
+    const questions = await Question.find(_q)
       .populate('author', 'name role')
       .sort({ createdAt: -1 });
 
@@ -25,12 +33,10 @@ exports.listQuestions = async (req, res) => {
       })),
     });
   } catch (e) {
-    console.error('[qa] listQuestions', e);
     res.status(500).json({ message: 'Failed to load questions' });
   }
 };
 
-// GET /api/qa/questions/:id  — one question with its answers
 exports.getQuestion = async (req, res) => {
   try {
     const question = await Question.findById(req.params.id).populate('author', 'name role');
@@ -58,27 +64,49 @@ exports.getQuestion = async (req, res) => {
       })),
     });
   } catch (e) {
-    console.error('[qa] getQuestion', e);
     res.status(500).json({ message: 'Failed to load question' });
   }
 };
 
-// POST /api/qa/questions  — any authenticated user asks a question
 exports.createQuestion = async (req, res) => {
   try {
     const { title, body } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ message: 'A question title is required' });
 
+    const _scope = await ownerScope(req.user);
     const q = await Question.create({
+      businessUnit: _scope.businessUnit,
       title: title.trim(),
       body: (body || '').trim(),
       author: req.user._id,
     });
 
-     await logAudit(req, {                             // ← after delete, before res.json
-    action: 'create', entity: 'question',
-    entityId: q._id, entityLabel: q.title,
-  });
+    await logAudit(req, {
+      action: 'create', entity: 'question',
+      entityId: q._id, entityLabel: q.title,
+    });
+
+    const recipients = await User.find({
+      active: true,
+      businessUnit: q.businessUnit,
+      _id: {
+        $ne: req.user._id,
+      },
+    }).select('_id');
+
+    try {
+      await notifyUsers(
+        recipients.map((user) => user._id),
+        {
+          type: 'COMMUNITY_QUESTION',
+          title: 'New Community Question',
+          body: `${req.user.name} posted a new question: ${q.title}`,
+          url: `/community?question=${q._id}`,
+        }
+      );
+    } catch (notificationError) {
+    }
+
     res.status(201).json({
       question: {
         id: q._id,
@@ -90,12 +118,10 @@ exports.createQuestion = async (req, res) => {
       },
     });
   } catch (e) {
-    console.error('[qa] createQuestion', e);
     res.status(500).json({ message: 'Failed to post question' });
   }
 };
 
-// POST /api/qa/questions/:id/answers  — any authenticated user answers
 exports.createAnswer = async (req, res) => {
   try {
     const { body } = req.body;
@@ -110,10 +136,26 @@ exports.createAnswer = async (req, res) => {
       author: req.user._id,
     });
 
-     await logAudit(req, {                             // ← after delete, before res.json
-    action: 'create', entity: 'answer',
-    entityId: a._id, entityLabel: a.body,
-  });
+    if (
+      question.author &&
+      String(question.author) !== String(req.user._id)
+    ) {
+      await createNotification({
+        userId: question.author,
+
+        type: 'COMMUNITY_REPLY',
+
+        title: 'New Reply to Your Question',
+
+        body: `${req.user.name} replied to your community question.`,
+
+        url: `/community?question=${question._id}`,
+      });
+    }
+    await logAudit(req, {
+      action: 'create', entity: 'answer',
+      entityId: a._id, entityLabel: a.body,
+    });
     res.status(201).json({
       answer: {
         id: a._id,
@@ -123,12 +165,10 @@ exports.createAnswer = async (req, res) => {
       },
     });
   } catch (e) {
-    console.error('[qa] createAnswer', e);
     res.status(500).json({ message: 'Failed to post answer' });
   }
 };
 
-// DELETE /api/qa/questions/:id  — admin only (removes the question + its answers)
 exports.deleteQuestion = async (req, res) => {
   try {
     const question = await Question.findById(req.params.id);
@@ -137,18 +177,16 @@ exports.deleteQuestion = async (req, res) => {
     await Answer.deleteMany({ question: question._id });
     await question.deleteOne();
 
-     await logAudit(req, {                             // ← after delete, before res.json
-    action: 'delete', entity: 'question',
-    entityId: question._id, entityLabel: question.title,
-  });
+    await logAudit(req, {
+      action: 'delete', entity: 'question',
+      entityId: question._id, entityLabel: question.title,
+    });
     res.json({ message: 'Question deleted' });
   } catch (e) {
-    console.error('[qa] deleteQuestion', e);
     res.status(500).json({ message: 'Failed to delete question' });
   }
 };
 
-// DELETE /api/qa/answers/:id  — admin only
 exports.deleteAnswer = async (req, res) => {
   try {
     const answer = await Answer.findById(req.params.id);
@@ -156,13 +194,12 @@ exports.deleteAnswer = async (req, res) => {
 
     await answer.deleteOne();
 
-     await logAudit(req, {                             // ← after delete, before res.json
-    action: 'delete', entity: 'answer',
-    entityId: answer._id, entityLabel: answer.body,
-  });
+    await logAudit(req, {
+      action: 'delete', entity: 'answer',
+      entityId: answer._id, entityLabel: answer.body,
+    });
     res.json({ message: 'Answer deleted' });
   } catch (e) {
-    console.error('[qa] deleteAnswer', e);
     res.status(500).json({ message: 'Failed to delete answer' });
   }
 };

@@ -1,0 +1,63 @@
+name: ls-portal
+
+services:
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    container_name: ls-portal-api
+    restart: unless-stopped
+    env_file: ./app.env
+    environment:
+      NODE_ENV: production
+      PORT: "10000"
+      TRUST_PROXY: "1"
+    volumes:
+      - uploads:/app/uploads
+    expose:
+      - "10000"
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:10000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: ${LOG_GROUP}
+        awslogs-stream: api
+        mode: non-blocking
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ls-portal-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: ${LOG_GROUP}
+        awslogs-stream: caddy
+        mode: non-blocking
+
+volumes:
+  uploads:
+  caddy_data:
+  caddy_config:

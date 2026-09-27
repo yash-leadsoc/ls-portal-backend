@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const answerSchema = new mongoose.Schema(
   {
-    question: { type: mongoose.Schema.Types.ObjectId, required: true }, // question _id
+    question: { type: mongoose.Schema.Types.ObjectId, required: true },
     answer: { type: String, default: '' },
   },
   { _id: false }
@@ -19,4 +19,5 @@ const writeupAnswerSchema = new mongoose.Schema(
 
 writeupAnswerSchema.index({ writeup: 1, employee: 1 }, { unique: true });
 
+writeupAnswerSchema.index({ employee: 1 });
 module.exports = mongoose.model('WriteupAnswer', writeupAnswerSchema);

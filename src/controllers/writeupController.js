@@ -1,8 +1,8 @@
 const Writeup = require('../models/Writeup');
+const { bumpStreak } = require('../utils/streak');
 const WriteupAnswer = require('../models/WriteupAnswer');
 const Document = require('../models/Document');
 const { logAudit } = require('../utils/audit');
-// Manager creates write-up questions for a document.
 exports.create = async (req, res) => {
   const { title, domainId, questions } = req.body;
   if (!domainId) return res.status(400).json({ message: 'Domain is required' });
@@ -15,7 +15,7 @@ exports.create = async (req, res) => {
     })),
     createdBy: req.user._id,
   });
-   await logAudit(req, {                             // ← after delete, before res.json
+   await logAudit(req, {
     action: 'create', entity: 'writeup',
     entityId: writeup._id, entityLabel: writeup.title,
   });
@@ -30,7 +30,7 @@ exports.writeupForDomain = async (req, res) => {
 exports.deleteWriteup = async (req, res) => {
   const w = await Writeup.findById(req.params.id);
   if (!w) return res.status(404).json({ message: 'Write-up not found' });
-   await logAudit(req, {                             // ← after delete, before res.json
+   await logAudit(req, {
     action: 'delete', entity: 'writeup',
     entityId: w._id, entityLabel: w.title,
   });
@@ -80,8 +80,6 @@ exports.remove = async (req, res) => {
   res.json({ message: 'Write-up archived' });
 };
 
-// --- Employee answers ---
-
 exports.myAnswer = async (req, res) => {
   const writeup = await Writeup.findById(req.params.id);
   if (!writeup) return res.status(404).json({ message: 'Write-up not found' });
@@ -93,16 +91,16 @@ exports.myAnswer = async (req, res) => {
 exports.saveAnswer = async (req, res) => {
   const writeup = await Writeup.findById(req.params.id);
   if (!writeup) return res.status(404).json({ message: 'Write-up not found' });
-  const { answers } = req.body; // [{question, answer}]
+  const { answers } = req.body;
   if (!Array.isArray(answers)) return res.status(400).json({ message: 'answers array required' });
   const saved = await WriteupAnswer.findOneAndUpdate(
     { writeup: writeup._id, employee: req.user._id },
     { $set: { answers } },
     { upsert: true, new: true }
   );
-  res.json({ answer: saved });
+  bumpStreak(req.user._id);
+    res.json({ answer: saved });
 };
-
 
 exports.updateWriteup = async (req, res) => {
   try {
@@ -118,13 +116,12 @@ exports.updateWriteup = async (req, res) => {
       }));
     }
     await writeup.save();
-    await logAudit(req, {                             // ← after delete, before res.json
+    await logAudit(req, {
     action: 'update', entity: 'writeup',
     entityId: writeup._id, entityLabel: writeup.title,
   });
     res.json({ writeup });
   } catch (e) {
-    console.error('[writeup] update', e);
     res.status(500).json({ message: 'Could not update write-up' });
   }
 };

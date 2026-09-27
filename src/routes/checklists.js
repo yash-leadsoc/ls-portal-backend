@@ -8,11 +8,10 @@ router.post('/', requireRole('admin', 'manager'), ctrl.create);
 router.get('/by-document/:documentId', ctrl.listByDocument);
 router.get('/:id', ctrl.getOne);
 router.patch('/:id', requireRole('admin', 'manager'), ctrl.update);
-router.delete('/:id', requireRole('admin'), ctrl.remove);
+router.delete('/:id', requireRole('admin', 'bu'), ctrl.remove);
 router.get('/domain/:domainId', ctrl.checklistForDomain);
-router.put('/:id', requireRole('admin', 'manager'), ctrl.updateChecklist);
+router.put('/:id', requireRole('admin', 'bu'), ctrl.updateChecklist);
 
-// employee responses
 router.get('/:id/my-response', requireRole('employee'), ctrl.myResponse);
 router.put('/:id/my-response', requireRole('employee'), ctrl.saveResponse);
 

@@ -9,14 +9,9 @@ const questionSchema = new mongoose.Schema(
   { _id: true }
 );
 
-// A set of write-up questions created by a manager for a document.
 const writeupSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
-    // document: { type: mongoose.Schema.Types.ObjectId, ref: 'Document', required: true },
-    // domain: { type: mongoose.Schema.Types.ObjectId, ref: 'Domain', required: true },
-    // document: { type: mongoose.Schema.Types.ObjectId, ref: 'Document', default: null },
-    // domain: { type: mongoose.Schema.Types.ObjectId, ref: 'Domain', required: true },
     document: { type: mongoose.Schema.Types.ObjectId, ref: 'Document', default: null },
     domain: { type: mongoose.Schema.Types.ObjectId, ref: 'Domain', required: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -26,4 +21,6 @@ const writeupSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+writeupSchema.index({ domain: 1, active: 1 });
+writeupSchema.index({ document: 1, active: 1 });
 module.exports = mongoose.model('Writeup', writeupSchema);

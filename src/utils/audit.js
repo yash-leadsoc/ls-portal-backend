@@ -1,10 +1,9 @@
 const AuditLog = require('../models/AuditLog');
 
-// Stamp the current actor + their BU onto a log entry. Never throws.
 function buFor(user = {}) {
   if (user.role === 'bu') return user._id;
   if (user.role === 'manager' || user.role === 'employee') return user.businessUnit || null;
-  return null; // admin (or unknown)
+  return null;
 }
 
 async function logAudit(req, { action, entity, entityId, entityLabel, meta } = {}) {
@@ -22,7 +21,6 @@ async function logAudit(req, { action, entity, entityId, entityLabel, meta } = {
       meta: meta || {},
     });
   } catch (e) {
-    console.error('[audit] failed', e.message);
   }
 }
 

@@ -31,4 +31,5 @@ const pptSubmissionSchema = new mongoose.Schema(
   }
 );
 
+pptSubmissionSchema.index({ uploadedBy: 1 });
 module.exports = mongoose.model('PptSubmission', pptSubmissionSchema);

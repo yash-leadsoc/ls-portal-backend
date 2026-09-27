@@ -4,8 +4,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 router.use(requireAuth);
 
-router.get('/', requireRole('admin', 'manager'), ctrl.list);   // read logs: admin + manager
+router.get('/', requireRole('admin', 'cto', 'bu', 'manager'), ctrl.list);
 router.post('/event', ctrl.record); 
-router.get('/insights', requireRole('admin', 'bu'), ctrl.insights);                      // any signed-in user can emit an event
+router.get('/insights', requireRole('admin', 'cto', 'bu'), ctrl.insights);
 
 module.exports = router;

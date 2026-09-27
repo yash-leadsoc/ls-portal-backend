@@ -1,18 +1,21 @@
 const User = require('../models/User');
 const { signToken } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
-// Single login endpoint for all three roles.
-// The client sends { identifier, password } where identifier is email OR employeeCode.
+const escapeRegex = require('../utils/escapeRegex');
 exports.login = async (req, res) => {
   try {
     const { identifier, email, password } = req.body;
-    const id = (identifier || email || '').trim().toLowerCase();
+    const rawId = identifier || email || '';
+    if (typeof rawId !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ message: 'Enter an email/ID and password to continue.' });
+    }
+    const id = rawId.trim().toLowerCase();
     if (!id || !password) {
       return res.status(400).json({ message: 'Enter an email/ID and password to continue.' });
     }
 
     const user = await User.findOne({
-      $or: [{ email: id }, { employeeCode: new RegExp(`^${id}$`, 'i') }],
+      $or: [{ email: id }, { employeeCode: new RegExp(`^${escapeRegex(id)}$`, 'i') }],
     });
 
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
@@ -33,18 +36,14 @@ exports.login = async (req, res) => {
 
     res.json({ token, user: user.toSafeJSON() });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: 'Login failed' });
   }
 };
-
-
 
 exports.me = async (req, res) => {
   res.json({ user: req.user.toSafeJSON() });
 };
 
-// Change own password
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

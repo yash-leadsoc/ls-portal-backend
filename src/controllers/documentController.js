@@ -1,6 +1,9 @@
+const { bumpStreak } = require('../utils/streak');
+
 const path = require('path');
 const fs = require('fs');
 const Document = require('../models/Document');
+const { buOf, seesAll, ownerScope } = require('../utils/scope');
 const MaterialReview = require('../models/MaterialReview');
 const { UPLOAD_DIR } = require('../middleware/upload');
 const os = require('os');
@@ -73,7 +76,6 @@ async function downloadToTemp(url, extension) {
   return tempPath;
 }
 
-// Manager or admin uploads a material for a domain.
 exports.upload = async (req, res) => {
   let tempInputPath = null;
   let tempOutputDir = null;
@@ -118,13 +120,7 @@ exports.upload = async (req, res) => {
 
     let pdfPath;
 
-    // ==============================
-    // OFFICE FILE → PDF
-    // ==============================
-
     if (officeExtensions.includes(extension)) {
-      console.log('[upload] Converting to PDF...');
-
       tempOutputDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'leadsoc_pdf_')
       );
@@ -133,13 +129,7 @@ exports.upload = async (req, res) => {
         tempInputPath,
         tempOutputDir
       );
-
-      console.log('[upload] PDF created:', pdfPath);
     }
-
-    // ==============================
-    // ALREADY PDF
-    // ==============================
 
     else if (extension === '.pdf') {
       pdfPath = tempInputPath;
@@ -151,28 +141,11 @@ exports.upload = async (req, res) => {
       });
     }
 
-    console.log(
-      '[upload] PDF exists:',
-      fs.existsSync(pdfPath)
-    );
-
-    // ==============================
-    // UPLOAD PDF TO CLOUDINARY
-    // ==============================
-
-    console.log('[upload] PDF path:', pdfPath);
-    console.log(
-      '[upload] PDF exists:',
-      fs.existsSync(pdfPath)
-    );
-
     if (!fs.existsSync(pdfPath)) {
       throw new Error(
         `PDF does not exist: ${pdfPath}`
       );
     }
-
-    console.log('[upload] Starting Cloudinary upload...');
 
     cloudinaryResult =
       await cloudinary.uploader.upload(
@@ -186,29 +159,13 @@ exports.upload = async (req, res) => {
         }
       );
 
-    console.log(
-      '[upload] Cloudinary SUCCESS:',
-      {
-        public_id: cloudinaryResult.public_id,
-        url: cloudinaryResult.secure_url,
-        resource_type: cloudinaryResult.resource_type,
-        format: cloudinaryResult.format,
-      }
-    );
-    console.log(
-      '[cloudinary] PDF uploaded:',
-      cloudinaryResult.secure_url
-    );
-
-    // ==============================
-    // SAVE MONGODB
-    // ==============================
-
+    const _scope = await ownerScope(req.user);
     const document = await Document.create({
       title,
       description: description || '',
 
       domain: domainId,
+      businessUnit: _scope.businessUnit,
 
       uploadedBy: req.user._id,
 
@@ -231,10 +188,6 @@ exports.upload = async (req, res) => {
       cloudinaryResourceType: 'image',
     });
 
-    // ==============================
-    // DELETE TEMP FILES
-    // ==============================
-
     if (
       tempInputPath &&
       fs.existsSync(tempInputPath)
@@ -256,15 +209,7 @@ exports.upload = async (req, res) => {
     }
 
     return res.status(201).json(document);
-
   } catch (error) {
-
-    console.error(
-      '[upload] Error:',
-      error
-    );
-
-    // Delete Cloudinary file if MongoDB failed
     if (cloudinaryResult?.public_id) {
       try {
         await cloudinary.uploader.destroy(
@@ -275,10 +220,6 @@ exports.upload = async (req, res) => {
           }
         );
       } catch (e) {
-        console.error(
-          '[cloudinary cleanup]',
-          e
-        );
       }
     }
 
@@ -309,41 +250,23 @@ exports.upload = async (req, res) => {
   }
 };
 
-
-// List materials, optionally by domain. Everyone authenticated can list.
-// exports.list = async (req, res) => {
-//   const filter = { active: true };
-//   if (req.query.domainId) filter.domain = req.query.domainId;
-//   const docs = await Document.find(filter)
-//     .sort({ createdAt: -1 })
-//     .populate('domain', 'key name')
-//     .populate('uploadedBy', 'name role');
-//   res.json({ documents: docs });
-// };
-
 exports.list = async (req, res) => {
   try {
     const { domainId } = req.query;
 
     const filter = {};
 
-    // --------------------------------------------------
-    // DOMAIN FILTER
-    // --------------------------------------------------
+    if (!seesAll(req.user)) filter.businessUnit = buOf(req.user);
+
     if (domainId) {
       filter.domain = domainId;
     }
 
-    // --------------------------------------------------
-    // EMPLOYEE ACCESS CONTROL
-    // --------------------------------------------------
     if (req.user.role === 'employee') {
       const assignedDomainIds = (req.user.assignedDomains || []).map(
         (id) => id?._id || id
       );
 
-      // If employee requests a specific domain,
-      // make sure they are assigned to it.
       if (domainId) {
         const allowed = assignedDomainIds.some(
           (id) => String(id) === String(domainId)
@@ -355,17 +278,12 @@ exports.list = async (req, res) => {
           });
         }
       } else {
-        // No specific domain selected:
-        // return documents only from assigned domains.
         filter.domain = {
           $in: assignedDomainIds,
         };
       }
     }
 
-    // --------------------------------------------------
-    // GET DOCUMENTS
-    // --------------------------------------------------
     const documents = await Document.find(filter)
       .populate('domain', 'name icon description')
       .populate('uploadedBy', 'name email employeeCode')
@@ -375,8 +293,6 @@ exports.list = async (req, res) => {
       documents,
     });
   } catch (error) {
-    console.error('[documents] Error:', error);
-
     return res.status(500).json({
       message: 'Failed to load documents',
     });
@@ -391,7 +307,6 @@ exports.getOne = async (req, res) => {
   res.json({ document: doc });
 };
 
-// Download the actual file. Records a review/download for employees.
 exports.download = async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc) return res.status(404).json({ message: 'Document not found' });
@@ -404,13 +319,12 @@ exports.download = async (req, res) => {
       { $set: { reviewed: true }, $inc: { downloadCount: 1 } },
       { upsert: true, new: true }
     );
+    bumpStreak(req.user._id);
   }
 
   res.download(filePath, doc.originalName);
 };
 
-
-// Preview the actual file in the browser.
 exports.preview = async (req, res) => {
   try {
     const document = await Document.findById(
@@ -432,20 +346,13 @@ exports.preview = async (req, res) => {
     return res.redirect(
       document.cloudinaryUrl
     );
-
   } catch (error) {
-    console.error(
-      '[preview] Error:',
-      error
-    );
-
     return res.status(500).json({
       message: 'Preview failed',
     });
   }
 };
 
-// Employee marks a material reviewed (without downloading).
 exports.markReviewed = async (req, res) => {
   const doc = await Document.findById(req.params.id);
   if (!doc) return res.status(404).json({ message: 'Document not found' });
@@ -454,6 +361,7 @@ exports.markReviewed = async (req, res) => {
     { $set: { reviewed: req.body.reviewed !== false } },
     { upsert: true, new: true }
   );
+  if (req.user.role === 'employee') bumpStreak(req.user._id);
   res.json({ review });
 };
 
@@ -469,7 +377,6 @@ exports.remove = async (req, res) => {
       });
     }
 
-    // Delete from Cloudinary
     if (document.cloudinaryPublicId) {
       try {
         await cloudinary.uploader.destroy(
@@ -481,21 +388,10 @@ exports.remove = async (req, res) => {
             type: 'upload',
           }
         );
-
-        console.log(
-          '[cloudinary] deleted:',
-          document.cloudinaryPublicId
-        );
-
       } catch (cloudinaryError) {
-        console.error(
-          '[cloudinary delete] Error:',
-          cloudinaryError
-        );
       }
     }
 
-    // Delete local file if it exists
     if (document.fileName) {
       const localPath = path.join(
         process.env.UPLOAD_DIR ||
@@ -508,12 +404,11 @@ exports.remove = async (req, res) => {
       }
     }
 
-    // Delete MongoDB record
     await Document.findByIdAndDelete(
       document._id
     );
 
-     await logAudit(req, {                             // ← after delete, before res.json
+     await logAudit(req, {
     action: 'delete', entity: 'document',
     entityId: document._id, entityLabel: document.title,
   });
@@ -522,23 +417,15 @@ exports.remove = async (req, res) => {
       message:
         'Document deleted successfully',
     });
-
   } catch (error) {
-    console.error(
-      '[remove] Error:',
-      error
-    );
-
     return res.status(500).json({
       message: 'Failed to delete document',
     });
   }
 };
 
-
 exports.removeAll = async (req, res) => {
   try {
-    // Delete all files inside uploads
     if (fs.existsSync(UPLOAD_DIR)) {
       const files = fs.readdirSync(UPLOAD_DIR);
 
@@ -552,10 +439,8 @@ exports.removeAll = async (req, res) => {
       }
     }
 
-    // Re-create uploads directory
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-    // Delete all document records
     const result = await Document.deleteMany({});
 
     res.json({
@@ -563,8 +448,6 @@ exports.removeAll = async (req, res) => {
       deletedDocuments: result.deletedCount,
     });
   } catch (err) {
-    console.error('[removeAll] Error:', err);
-
     res.status(500).json({
       message: 'Failed to delete all documents',
     });
@@ -608,10 +491,12 @@ exports.createLink = async (req, res) => {
       size = Buffer.byteLength(html, 'utf8');
     }
 
+    const _scope = await ownerScope(req.user);
     const doc = await Document.create({
       title: title.trim(),
       description: (description || '').trim(),
       domain: domainId,
+      businessUnit: _scope.businessUnit,
       fileName: 'link',
       originalName, mimeType, size,
       uploadedBy: req.user._id,
@@ -621,14 +506,13 @@ exports.createLink = async (req, res) => {
       cloudinaryResourceType: 'link',
     });
 
-    await logAudit(req, {                             // ← after delete, before res.json
+    await logAudit(req, {
       action: 'create', entity: 'document',
       entityId: doc._id, entityLabel: doc.title,
     });
 
     res.status(201).json({ document: doc });
   } catch (e) {
-    console.error('[documents] createLink', e);
     res.status(500).json({ message: 'Could not create material' });
   }
 };

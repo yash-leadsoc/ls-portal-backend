@@ -11,12 +11,6 @@ router.post(
   controller.submit
 );
 
-
-router.get(
-  '/employee/:employeeId',
-  requireAuth,
-  requireRole('admin', 'manager'),
-  controller.getEmployeeSubmissions
-);
+router.get('/employee/:id',requireAuth, requireRole('admin', 'cto', 'bu', 'manager'), controller.getEmployeeSubmissions);
 
 module.exports = router;

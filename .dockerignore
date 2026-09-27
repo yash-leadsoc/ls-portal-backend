@@ -5,6 +5,9 @@ npm-debug.log
 uploads
 .git
 .gitignore
+.github
+deploy
+infra
+*.md
 Dockerfile
 .dockerignore
-node_modules

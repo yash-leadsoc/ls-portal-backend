@@ -1,14 +1,13 @@
 const AuditLog = require('../models/AuditLog');
+const escapeRegex = require('../utils/escapeRegex');
 const { logAudit } = require('../utils/audit');
 
-// GET /api/audit  — admin sees all; BU sees only its own BU
 exports.list = async (req, res) => {
   try {
     const { actor, action, entity, from, to, q, page = 1, limit = 50 } = req.query;
     const filter = {};
 
-    if (req.user.role === 'admin') {
-      // no scope — sees everything
+    if (req.user.role === 'admin' || req.user.role === 'cto') {
     } else if (req.user.role === 'manager') {
       filter.businessUnit = req.user._id;
     } else {
@@ -27,7 +26,7 @@ exports.list = async (req, res) => {
         filter.createdAt.$lte = end;
       }
     }
-    if (q) filter.$or = [{ entityLabel: new RegExp(q, 'i') }, { actorName: new RegExp(q, 'i') }];
+    if (q) filter.$or = [{ entityLabel: new RegExp(escapeRegex(q), 'i') }, { actorName: new RegExp(escapeRegex(q), 'i') }];
 
     const lim = Math.min(Number(limit) || 50, 200);
     const skip = (Math.max(Number(page), 1) - 1) * lim;
@@ -39,13 +38,10 @@ exports.list = async (req, res) => {
 
     res.json({ rows, total, page: Math.max(Number(page), 1), limit: lim });
   } catch (e) {
-    console.error('[audit] list', e);
     res.status(500).json({ message: 'Could not load logs' });
   }
 };
 
-// POST /api/audit/event — client-emitted events (e.g. write-up focus lost)
-// Identity is taken from the token, never from the body.
 exports.record = async (req, res) => {
   const { action, entity, entityId, entityLabel, meta } = req.body || {};
   if (!action) return res.status(400).json({ message: 'action is required' });
@@ -53,12 +49,11 @@ exports.record = async (req, res) => {
   res.status(201).json({ ok: true });
 };
 
-
 exports.insights = async (req, res) => {
   try {
     const match = {};
     if (req.user.role === 'bu') match.businessUnit = req.user._id;
-    else if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+    else if (req.user.role !== 'admin'&& req.user.role !== 'cto') return res.status(403).json({ message: 'Forbidden' });
 
     const { from, to } = req.query;
     if (from || to) {
@@ -97,7 +92,6 @@ exports.insights = async (req, res) => {
       focusLost: focusLost.map(x => ({ name: x._id || 'unknown', value: x.n })),
     });
   } catch (e) {
-    console.error('[audit] insights', e);
     res.status(500).json({ message: 'Could not load insights' });
   }
 };

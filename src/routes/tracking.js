@@ -5,7 +5,8 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 router.use(requireAuth);
 
 router.get('/me', requireRole('employee'), ctrl.myProgress);
-router.get('/cohort', requireRole('admin', 'manager'), ctrl.cohort);
-router.get('/employee/:id', requireRole('admin', 'manager'), ctrl.employeeProgress);
+router.get('/export/engineers', requireRole('admin', 'cto', 'bu', 'manager'), ctrl.exportEngineers);
+router.get('/cohort', requireRole('admin', 'cto', 'bu', 'manager'), ctrl.cohort);
+router.get('/employee/:id', requireRole('admin', 'cto', 'bu', 'manager'), ctrl.employeeProgress);
 
 module.exports = router;

@@ -1,21 +1,19 @@
 const mongoose = require('mongoose');
 
-// A "Document" is a training material (ppt/doc/pdf/etc.) uploaded by a manager or admin,
-// attached to a specific domain. Checklists and write-up questions hang off a document.
 const documentSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
     domain: { type: mongoose.Schema.Types.ObjectId, ref: 'Domain', required: true },
+    businessUnit: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
-    // stored file
-    fileName: { type: String, required: true },        // stored name on disk
-    originalName: { type: String, required: true },     // name shown to user
+    fileName: { type: String, required: true },
+    originalName: { type: String, required: true },
     mimeType: { type: String, default: 'application/octet-stream' },
     size: { type: Number, default: 0 },
 
     uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    uploaderRole: { type: String, enum: ['admin', 'manager'], required: true },
+    uploaderRole: { type: String, enum: ['admin', 'cto', 'bu', 'manager'], required: true },
 
     active: { type: Boolean, default: true },
     type: { type: String, enum: ['file', 'youtube', 'html'], default: 'file' },
@@ -50,4 +48,6 @@ const documentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+documentSchema.index({ businessUnit: 1, domain: 1, createdAt: -1 });
+documentSchema.index({ domain: 1, createdAt: -1 });
 module.exports = mongoose.model('Document', documentSchema);

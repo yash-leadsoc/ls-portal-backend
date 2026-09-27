@@ -46,7 +46,7 @@ exports.submit = async (req, res) => {
       }
     );
 
-     await logAudit(req, {                             // ← after delete, before res.json
+     await logAudit(req, {
     action: 'submit', entity: 'pptSubmission',
     entityId: submission._id, entityLabel: submission.exerciseName,
   });
@@ -55,8 +55,6 @@ exports.submit = async (req, res) => {
       submission,
     });
   } catch (error) {
-    console.error('[ppt submission] Error:', error);
-
     return res.status(500).json({
       message: 'Failed to submit PPT',
     });
@@ -72,18 +70,12 @@ exports.getEmployeeSubmissions = async (req, res) => {
     })
       .populate('uploadedBy', 'name email employeeCode')
       .populate('domain', 'name description icon')
-      // .populate('exercise', 'name description')
       .sort({ createdAt: -1 });
 
     return res.json({
       submissions,
     });
   } catch (error) {
-    console.error(
-      '[ppt submissions] employee error:',
-      error
-    );
-
     return res.status(500).json({
       message: 'Failed to load employee PPT submissions',
     });

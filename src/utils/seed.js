@@ -16,7 +16,6 @@ const DOMAINS = [
 async function run() {
   await connectDB();
 
-  // --- Admin ---
   const adminEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@leadsoc.com').toLowerCase();
   let admin = await User.findOne({ email: adminEmail });
   if (!admin) {
@@ -28,21 +27,16 @@ async function run() {
     });
     await admin.setPassword(process.env.SEED_ADMIN_PASSWORD || 'Admin@123');
     await admin.save();
-    console.log(`[seed] admin created: ${adminEmail}`);
   } else {
-    console.log('[seed] admin already exists, skipping');
   }
 
-  // --- Domains ---
   for (const d of DOMAINS) {
     const exists = await Domain.findOne({ key: d.key });
     if (!exists) {
       await Domain.create({ ...d, createdBy: admin._id });
-      console.log(`[seed] domain created: ${d.name}`);
     }
   }
 
-  // --- Optional demo manager + employee ---
   if (process.env.SEED_DEMO === 'true') {
     let mgr = await User.findOne({ email: 'manager@leadsoc.com' });
     if (!mgr) {
@@ -55,7 +49,6 @@ async function run() {
       });
       await mgr.setPassword('Manager@123');
       await mgr.save();
-      console.log('[seed] demo manager created: manager@leadsoc.com / Manager@123');
     }
 
     let emp = await User.findOne({ email: 'engineer@leadsoc.com' });
@@ -70,16 +63,13 @@ async function run() {
       });
       await emp.setPassword('Engineer@123');
       await emp.save();
-      console.log('[seed] demo employee created: engineer@leadsoc.com / Engineer@123');
     }
   }
 
-  console.log('[seed] done');
   await mongoose.disconnect();
   process.exit(0);
 }
 
 run().catch((err) => {
-  console.error('[seed] failed:', err);
   process.exit(1);
 });

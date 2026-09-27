@@ -7,10 +7,10 @@ const auditSchema = new mongoose.Schema(
     actorRole: { type: String, default: '' },
     businessUnit: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
-    action: { type: String, required: true },   // create | update | delete | login | writeup.focus_lost ...
-    entity: { type: String, default: '' },       // checklist | document | domain | writeup | user | auth ...
+    action: { type: String, required: true },
+    entity: { type: String, default: '' },
     entityId: { type: String, default: null },
-    entityLabel: { type: String, default: '' },  // human-readable name for display
+    entityLabel: { type: String, default: '' },
 
     meta: { type: Object, default: {} },
   },

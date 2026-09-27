@@ -5,8 +5,7 @@ const { upload } = require('../middleware/upload');
 
 router.use(requireAuth);
 
-// Manager or admin uploads a material
-router.post('/', requireRole('admin', 'manager'), upload.single('file'), ctrl.upload);
+router.post('/', requireRole('admin', 'bu', 'manager'), upload.single('file'), ctrl.upload);
 router.get('/', ctrl.list);
 router.get('/:id', ctrl.getOne);
 router.get('/:id/preview', ctrl.preview);
@@ -19,7 +18,7 @@ router.delete(
   ctrl.removeAll
 );
 
-router.delete('/:id', requireRole('admin', 'manager'), ctrl.remove);
-router.post('/link', requireRole('admin', 'manager'), ctrl.createLink);
+router.delete('/:id', requireRole('admin', 'bu', 'manager'), ctrl.remove);
+router.post('/link', requireRole('admin', 'bu', 'manager'), ctrl.createLink);
 
 module.exports = router;
