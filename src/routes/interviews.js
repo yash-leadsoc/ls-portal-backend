@@ -2,6 +2,7 @@ const router = require('express').Router();
 const ctrl = require('../controllers/interviewController');
 const company = require('../controllers/companyController');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { notifyAfter } = require('../services/notificationRules');
 const { upload } = require('../middleware/upload');
 
 router.use(requireAuth);
@@ -16,11 +17,11 @@ router.delete('/materials/:id', requireRole('admin', 'bu', 'manager'), ctrl.dele
 
 router.get('/mocks', ctrl.listMocks);
 router.post('/mocks', requireRole('admin', 'bu', 'manager'), ctrl.scheduleMock);
-router.patch('/mocks/:id/score', requireRole('admin', 'bu', 'manager'), ctrl.scoreMock);
+router.patch('/mocks/:id/score', requireRole('admin', 'bu', 'manager'), notifyAfter('mock.scored'), ctrl.scoreMock);
 
 router.get('/clients', ctrl.listClients);
-router.post('/clients', requireRole('admin', 'bu'), ctrl.createClient);
-router.patch('/clients/:id', requireRole('admin', 'bu'), ctrl.updateClient);
+router.post('/clients', requireRole('admin', 'bu'), notifyAfter('client.created'), ctrl.createClient);
+router.patch('/clients/:id', requireRole('admin', 'bu'), notifyAfter('client.updated'), ctrl.updateClient);
 
 router.get('/availability', ctrl.listAvailability);
 router.post('/availability', requireRole('employee'), ctrl.addAvailability);

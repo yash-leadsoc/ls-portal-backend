@@ -1,11 +1,12 @@
 const router = require('express').Router();
 const ctrl = require('../controllers/documentController');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { notifyAfter } = require('../services/notificationRules');
 const { upload } = require('../middleware/upload');
 
 router.use(requireAuth);
 
-router.post('/', requireRole('admin', 'bu', 'manager'), upload.single('file'), ctrl.upload);
+router.post('/', requireRole('admin', 'bu', 'manager'), notifyAfter('material.created'), upload.single('file'), ctrl.upload);
 router.get('/', ctrl.list);
 router.get('/:id', ctrl.getOne);
 router.get('/:id/preview', ctrl.preview);
@@ -19,6 +20,6 @@ router.delete(
 );
 
 router.delete('/:id', requireRole('admin', 'bu', 'manager'), ctrl.remove);
-router.post('/link', requireRole('admin', 'bu', 'manager'), ctrl.createLink);
+router.post('/link', requireRole('admin', 'bu', 'manager'), notifyAfter('material.created'), ctrl.createLink);
 
 module.exports = router;

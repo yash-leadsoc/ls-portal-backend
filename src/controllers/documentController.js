@@ -1,5 +1,5 @@
 const { bumpStreak } = require('../utils/streak');
-
+const { moveToTrash, archiveToTrash } = require('../utils/trash');
 const path = require('path');
 const fs = require('fs');
 const Document = require('../models/Document');
@@ -377,45 +377,61 @@ exports.remove = async (req, res) => {
       });
     }
 
-    if (document.cloudinaryPublicId) {
-      try {
-        await cloudinary.uploader.destroy(
-          document.cloudinaryPublicId,
-          {
-            resource_type:
-              document.cloudinaryResourceType ||
-              'image',
-            type: 'upload',
-          }
-        );
-      } catch (cloudinaryError) {
-      }
-    }
+    // if (document.cloudinaryPublicId) {
+    //   try {
+    //     await cloudinary.uploader.destroy(
+    //       document.cloudinaryPublicId,
+    //       {
+    //         resource_type:
+    //           document.cloudinaryResourceType ||
+    //           'image',
+    //         type: 'upload',
+    //       }
+    //     );
+    //   } catch (cloudinaryError) {
+    //   }
+    // }
 
-    if (document.fileName) {
-      const localPath = path.join(
-        process.env.UPLOAD_DIR ||
-        path.join(process.cwd(), 'uploads'),
-        document.fileName
-      );
+    // if (document.fileName) {
+    //   const localPath = path.join(
+    //     process.env.UPLOAD_DIR ||
+    //     path.join(process.cwd(), 'uploads'),
+    //     document.fileName
+    //   );
 
-      if (fs.existsSync(localPath)) {
-        fs.unlinkSync(localPath);
-      }
-    }
+    //   if (fs.existsSync(localPath)) {
+    //     fs.unlinkSync(localPath);
+    //   }
+    // }
 
-    await Document.findByIdAndDelete(
-      document._id
-    );
+    // await Document.findByIdAndDelete(
+    //   document._id
+    // );
 
-     await logAudit(req, {
-    action: 'delete', entity: 'document',
-    entityId: document._id, entityLabel: document.title,
-  });
+    const uploadRoot = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
+    await moveToTrash(req, {
+      entity: 'document',
+      label: document.title,
+      docs: [{ model: 'Document', doc: document }],
+      files: [
+        {
+          publicId: document.cloudinaryPublicId || null,
+          resourceType: document.cloudinaryResourceType || 'image',
+          localPath: document.fileName ? path.join(uploadRoot, document.fileName) : null,
+        },
+      ],
+    });
+
+
+
+    await logAudit(req, {
+      action: 'delete', entity: 'document',
+      entityId: document._id, entityLabel: document.title,
+    });
 
     return res.json({
       message:
-        'Document deleted successfully',
+        'Document moved to Recycle Bin. An admin can restore it within 30 days.',
     });
   } catch (error) {
     return res.status(500).json({

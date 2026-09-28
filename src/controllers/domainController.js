@@ -1,9 +1,10 @@
 const Domain = require('../models/Domain');
 const { logAudit } = require('../utils/audit');
 const { buOf, seesAll, ownerScope } = require('../utils/scope');
+const { moveToTrash, archiveToTrash } = require('../utils/trash');
 exports.list = async (req, res) => {
   try {
-    const q = {active: true};
+    const q = { active: true };
     if (!seesAll(req.user)) q.businessUnit = buOf(req.user);
     const domains = await Domain.find(q).populate('category', 'name').sort({ name: 1 });
 
@@ -63,10 +64,10 @@ exports.create = async (req, res) => {
       businessUnit,
       category,
     });
-     await logAudit(req, {
-    action: 'create', entity: 'domain',
-    entityId: domain._id, entityLabel: domain.name,
-  });
+    await logAudit(req, {
+      action: 'create', entity: 'domain',
+      entityId: domain._id, entityLabel: domain.name,
+    });
     res.status(201).json({ domain });
   } catch (err) {
     res.status(500).json({ message: 'Could not create domain' });
@@ -90,9 +91,10 @@ exports.deleteDomain = async (req, res) => {
   if (!domain) return res.status(404).json({ message: 'Domain not found' });
   domain.active = false;
   await domain.save();
-   await logAudit(req, {
+  await archiveToTrash(req, { entity: 'domain', label: domain.name || 'Domain', model: 'Domain', id: domain._id });
+  await logAudit(req, {
     action: 'delete', entity: 'domain',
     entityId: domain._id, entityLabel: domain.name,
   });
-  res.json({ message: 'Domain deleted' });
+    res.json({ message: 'Domain moved to Recycle Bin. An admin can restore it within 30 days.' });
 };

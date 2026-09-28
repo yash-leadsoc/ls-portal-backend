@@ -1,4 +1,5 @@
 const cloudinary = require('../config/cloudinary');
+const { formatDateTime } = require('../utils/time');
 const escapeRegex = require('../utils/escapeRegex');
 const Company = require('../models/Company');
 const InterviewMaterial = require('../models/InterviewMaterial');
@@ -154,7 +155,7 @@ exports.scheduleMock = async (req, res) => {
 
       title: 'Mock Interview Scheduled',
 
-      body: `Your mock interview is scheduled for ${start.toLocaleString()}${forRole ? ` for ${forRole}` : ''}.`,
+      body: `Your mock interview is scheduled for ${formatDateTime(start)}${forRole ? ` for ${forRole}` : ''}.`,
 
       url: '/interviews',
     });

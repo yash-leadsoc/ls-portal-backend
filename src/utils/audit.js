@@ -6,9 +6,15 @@ function buFor(user = {}) {
   return null;
 }
 
-async function logAudit(req, { action, entity, entityId, entityLabel, meta } = {}) {
+function clientInfo(req) {
+  if (!req) return { ip: '', userAgent: '' };
+  const ua = typeof req.get === 'function' ? req.get('user-agent') || '' : '';
+  return { ip: req.ip || '', userAgent: ua.slice(0, 300) };
+}
+
+async function logAudit(req, { action, entity, entityId, entityLabel, meta, actor } = {}) {
   try {
-    const u = (req && req.user) || {};
+    const u = actor || (req && req.user) || {};
     await AuditLog.create({
       actor: u._id || null,
       actorName: u.name || '',
@@ -19,9 +25,9 @@ async function logAudit(req, { action, entity, entityId, entityLabel, meta } = {
       entityId: entityId != null ? String(entityId) : null,
       entityLabel: entityLabel || '',
       meta: meta || {},
+      ...clientInfo(req),
     });
-  } catch (e) {
-  }
+  } catch (e) {}
 }
 
-module.exports = { logAudit };
+module.exports = { logAudit, clientInfo };

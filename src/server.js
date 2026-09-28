@@ -8,7 +8,11 @@ const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const connectDB = require('./config/db');
+const { startTrashPurgeJob } = require('./utils/trash');
 const sanitize = require('./middleware/sanitize');
+const { monitor, startMonitorJobs, flushMetrics } = require('./middleware/monitor');
+const { startAlertJob } = require('./services/alerts');
+const { logSystem } = require('./utils/systemLog');
 const pptSubmissionRoutes = require('./routes/pptSubmission');
 
 const isProd = process.env.NODE_ENV === 'production';
@@ -47,6 +51,7 @@ app.use(compression());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: false, limit: '2mb' }));
 app.use(sanitize);
+app.use(monitor);
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -87,6 +92,8 @@ app.use('/api/assistant', require('./routes/assistant'));
 app.use('/api/exercises', require('./routes/exercises'));
 app.use('/api/streak', require('./routes/streak'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/trash', require('./routes/trash'));
+app.use('/api/insights', require('./routes/insights'));
 
 app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 
@@ -98,19 +105,47 @@ app.use((err, req, res, next) => {
   else if (err instanceof mongoose.Error.CastError) status = 400;
   else if (err instanceof mongoose.Error.ValidationError) status = 400;
 
+  res.locals.error = err;
+  if (status >= 500) {
+    logSystem('error', 'api', `${req.method} ${req.originalUrl.split('?')[0]} failed: ${err.message}`, {
+      stack: String(err.stack || '').slice(0, 2000),
+    });
+  }
   const message = status >= 500 && isProd ? 'Server error' : err.message || 'Server error';
   res.status(status).json({ message });
+});
+
+process.on('unhandledRejection', (reason) => {
+  logSystem('error', 'process', `Unhandled promise rejection: ${reason && reason.message ? reason.message : reason}`, {
+    stack: String((reason && reason.stack) || '').slice(0, 2000),
+  });
+});
+
+process.on('uncaughtException', (err) => {
+  logSystem('error', 'process', `Uncaught exception: ${err.message}`, { stack: String(err.stack || '').slice(0, 2000) }).finally(() =>
+    process.exit(1)
+  );
 });
 
 const PORT = process.env.PORT || 5000;
 
 connectDB()
   .then(() => {
+    startTrashPurgeJob();
+    startMonitorJobs();
+    startAlertJob();
     const server = app.listen(PORT);
+    logSystem('info', 'server', `Server started (Node ${process.version}, pid ${process.pid})`);
+
+    mongoose.connection.on('disconnected', () => logSystem('warn', 'database', 'Database disconnected'));
+    mongoose.connection.on('reconnected', () => logSystem('info', 'database', 'Database reconnected'));
+    mongoose.connection.on('error', (e) => logSystem('error', 'database', `Database error: ${e.message}`));
     server.keepAliveTimeout = 65 * 1000;
     server.headersTimeout = 66 * 1000;
 
-    const shutdown = () => {
+    const shutdown = async () => {
+      await logSystem('info', 'server', 'Server shutting down');
+      await flushMetrics();
       server.close(() => {
         mongoose.connection.close(false).finally(() => process.exit(0));
       });

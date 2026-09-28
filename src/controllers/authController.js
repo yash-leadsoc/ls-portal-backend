@@ -18,11 +18,32 @@ exports.login = async (req, res) => {
       $or: [{ email: id }, { employeeCode: new RegExp(`^${escapeRegex(id)}$`, 'i') }],
     });
 
-    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    if (!user.active) return res.status(403).json({ message: 'Account is inactive' });
+    const failed = (reason, who) =>
+      logAudit(req, {
+        action: 'login.failed',
+        entity: 'auth',
+        entityId: who ? who._id : null,
+        entityLabel: id,
+        meta: { reason },
+        actor: who ? { _id: who._id, name: who.name, role: who.role, businessUnit: who.businessUnit } : { name: id },
+      });
+
+    if (!user) {
+      await failed('unknown account');
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    if (!user.active) {
+      await failed('inactive account', user);
+      return res.status(403).json({ message: 'Account is inactive' });
+    }
 
     const ok = await user.verifyPassword(password);
-    if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
+    if (!ok) {
+      await failed('wrong password', user);
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+
+    await User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date(), lastActiveAt: new Date() } });
 
     const token = signToken(user);
 
@@ -32,12 +53,21 @@ exports.login = async (req, res) => {
       entityId: user._id,
       entityLabel: user.name,
       meta: { email: user.email, at: new Date().toISOString() },
+      actor: user,
     });
 
     res.json({ token, user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Login failed' });
   }
+};
+
+exports.logout = async (req, res) => {
+  const PushSubscription = require('../models/PushSubscription');
+  const endpoint = typeof req.body.endpoint === 'string' ? req.body.endpoint : null;
+  if (endpoint) await PushSubscription.deleteOne({ user: req.user._id, endpoint });
+  await logAudit(req, { action: 'logout', entity: 'auth', entityId: req.user._id, entityLabel: req.user.name });
+  res.json({ message: 'Logged out' });
 };
 
 exports.me = async (req, res) => {
@@ -54,6 +84,7 @@ exports.changePassword = async (req, res) => {
     if (!ok) return res.status(400).json({ message: 'Current password is incorrect' });
     await req.user.setPassword(newPassword);
     await req.user.save();
+    await logAudit(req, { action: 'password.change', entity: 'auth', entityId: req.user._id, entityLabel: req.user.name });
     
     res.json({ message: 'Password updated' });
   } catch (err) {

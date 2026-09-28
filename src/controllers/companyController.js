@@ -1,5 +1,5 @@
 const Company = require('../models/Company');
-
+const { moveToTrash, archiveToTrash } = require('../utils/trash');
 exports.listCompanies = async (req, res) => {
   const q = { active: true };
   if (req.query.category) q.category = req.query.category;
@@ -26,5 +26,6 @@ exports.deleteCompany = async (req, res) => {
   const c = await Company.findById(req.params.id);
   if (!c) return res.status(404).json({ message: 'Company not found' });
   c.active = false; await c.save();
-  res.json({ message: 'Company removed' });
+  await archiveToTrash(req, { entity: 'company', label: c.name || 'Company', model: 'Company', id: c._id });
+  res.json({ message: 'Company moved to Recycle Bin. An admin can restore it within 30 days.' });
 };

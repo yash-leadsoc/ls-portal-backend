@@ -13,11 +13,16 @@ const auditSchema = new mongoose.Schema(
     entityLabel: { type: String, default: '' },
 
     meta: { type: Object, default: {} },
+    ip: { type: String, default: '' },
+    userAgent: { type: String, default: '' },
   },
   { timestamps: true }
 );
 
 auditSchema.index({ createdAt: -1 });
+auditSchema.index({ createdAt: 1 }, { expireAfterSeconds: 180 * 24 * 60 * 60 });
 auditSchema.index({ businessUnit: 1, createdAt: -1 });
+auditSchema.index({ action: 1, createdAt: -1 });
+auditSchema.index({ actor: 1, createdAt: -1 });
 
 module.exports = mongoose.model('AuditLog', auditSchema);

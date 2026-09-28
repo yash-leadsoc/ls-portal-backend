@@ -34,6 +34,9 @@ const userSchema = new mongoose.Schema(
 
     menuConfig: { type: [String], default: [] },
 
+    lastLoginAt: { type: Date, default: null },
+    lastActiveAt: { type: Date, default: null },
+
     streak: {
       current: { type: Number, default: 0 },
       longest: { type: Number, default: 0 },
@@ -73,6 +76,8 @@ userSchema.methods.toSafeJSON = function () {
     jobStatus: this.jobStatus || 'on_training',
     menuConfig: this.menuConfig || [],
     streak: this.streak || { current: 0, longest: 0, lastActiveDate: null, activeDays: [] },
+    lastLoginAt: this.lastLoginAt,
+    lastActiveAt: this.lastActiveAt,
     createdAt: this.createdAt,
   };
 };

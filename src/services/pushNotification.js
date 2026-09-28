@@ -9,14 +9,20 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
+const URGENT_TYPES = new Set(['SYSTEM_ALERT']);
+
 async function sendPushToUser(userId, payload) {
+  const options = {
+    TTL: Number(process.env.PUSH_TTL_SECONDS || 3 * 24 * 60 * 60),
+    urgency: URGENT_TYPES.has(payload && payload.type) ? 'high' : 'normal',
+  };
   const subscriptions = await PushSubscription.find({
     user: userId,
   });
 
   for (const subscription of subscriptions) {
     try {
-      const result = await webpush.sendNotification(
+      await webpush.sendNotification(
         {
           endpoint: subscription.endpoint,
           keys: {
@@ -24,7 +30,8 @@ async function sendPushToUser(userId, payload) {
             auth: subscription.keys.auth,
           },
         },
-        JSON.stringify(payload)
+        JSON.stringify(payload),
+        options
       );
     } catch (error) {
       if (error.statusCode === 404 || error.statusCode === 410) {

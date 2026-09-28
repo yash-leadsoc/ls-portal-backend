@@ -1,5 +1,5 @@
 const Category = require('../models/Category');
-
+const { moveToTrash, archiveToTrash } = require('../utils/trash');
 exports.listCategories = async (req, res) => {
   const categories = await Category.find({ active: true }).sort({ name: 1 });
   res.json({ categories });
@@ -18,10 +18,11 @@ exports.createCategory = async (req, res) => {
   res.status(201).json({ category });
 };
 
-exports.deleteCategory = async (req, res) => {
+exports.deleteCategory = async (req, res)  => {
   const c = await Category.findById(req.params.id);
   if (!c) return res.status(404).json({ message: 'Category not found' });
   c.active = false;
   await c.save();
-  res.json({ message: 'Category removed' });
+  await archiveToTrash(req, { entity: 'category', label: c.name || 'Category', model: 'Category', id: c._id });
+  res.json({ message: 'Category moved to Recycle Bin. An admin can restore it within 30 days.' });
 };

@@ -1,10 +1,11 @@
 const router = require('express').Router();
 const ctrl = require('../controllers/writeupController');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { notifyAfter } = require('../services/notificationRules');
 
 router.use(requireAuth);
 
-router.post('/', requireRole('admin', 'manager'), ctrl.create);
+router.post('/', requireRole('admin', 'manager'), notifyAfter('writeup.created'), ctrl.create);
 router.get('/by-document/:documentId', ctrl.listByDocument);
 router.get('/:id', ctrl.getOne);
 router.patch('/:id', requireRole('admin', 'manager'), ctrl.update);
