@@ -13,7 +13,7 @@ router.get('/bus', requireRole('admin', 'cto'), ctrl.listBUs);
 
 router.post('/managers', requireRole('admin', 'bu'), ctrl.createManager);
 router.post('/employees', requireRole('admin', 'bu', 'manager'), ctrl.createEmployee);
-
+router.post('/employees/bulk', requireRole('bu'), ctrl.bulkCreateEmployees);
 router.patch('/me/profile', requireRole('employee'), ctrl.updateMyProfile);
 router.patch('/me/menu', requireRole('bu'), ctrl.updateMyMenu);
 router.patch('/:id/status', requireRole('admin', 'bu', 'manager'), notifyAfter('status.changed'), ctrl.setStatus);

@@ -94,7 +94,8 @@ app.use('/api/streak', require('./routes/streak'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/trash', require('./routes/trash'));
 app.use('/api/insights', require('./routes/insights'));
-
+app.use('/api/resume', require('./routes/resume'));
+app.use('/api/settings', require('./routes/settings'));
 app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 
 app.use((err, req, res, next) => {

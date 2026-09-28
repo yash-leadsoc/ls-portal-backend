@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const RETENTION_DAYS = 30;
+const RETENTION_DAYS = 365;
 
 const trashSchema = new mongoose.Schema(
   {

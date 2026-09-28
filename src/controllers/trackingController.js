@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { benchInfo } = require('../utils/bench');
 const Domain = require('../models/Domain');
 const Document = require('../models/Document');
 const Checklist = require('../models/Checklist');
@@ -328,10 +329,7 @@ exports.employeeProgress = async (req, res) => {
         buName: employee.businessUnit?.name || null,
         categoryName: employee.businessUnit?.category?.name || null,
         trainerName: employee.manager?.name || null,
-        benchDays: (() => {
-          const f = employee.benchStart || employee.enrolledAt || employee.createdAt;
-          return f ? Math.max(0, Math.floor((Date.now() - new Date(f).getTime()) / 86400000)) : 0;
-        })(),
+        ...benchInfo(employee),
       },
       progress,
       summary: {
@@ -386,14 +384,17 @@ exports.exportEngineers = async (req, res) => {
       const active = Object.values(progress).filter((d) => d.started);
       const ovs = active.map((d) => d.overall).filter((v) => v != null);
       const trainingAvg = ovs.length ? Math.round(ovs.reduce((a, b) => a + b, 0) / ovs.length) : 0;
-      const benchFrom = e.benchStart || e.enrolledAt || e.createdAt;
-      const benchDays = benchFrom ? Math.max(0, Math.floor((Date.now() - new Date(benchFrom).getTime()) / 86400000)) : 0;
+      // const benchFrom = e.benchStart || e.enrolledAt || e.createdAt;
+      // const benchDays = benchFrom ? Math.max(0, Math.floor((Date.now() - new Date(benchFrom).getTime()) / 86400000)) : 0;
+      const bench = benchInfo(e);
       rows.push({
         lsid: e.employeeCode || '',
         name: e.name,
         bu: e.businessUnit?.name || '',
         category: e.businessUnit?.category?.name || '',
-        benchDays,
+        benchStart: bench.benchStart,
+        deployedAt: bench.deployedAt,
+        benchDays: bench.benchDays,
         status: e.jobStatus || '',
         domainsAssigned: (e.assignedDomains || []).length,
         totalDomains,

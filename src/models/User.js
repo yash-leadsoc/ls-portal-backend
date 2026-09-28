@@ -30,6 +30,7 @@ const userSchema = new mongoose.Schema(
     skills: { type: [String], default: [] },
     contactNumber: { type: String, default: '' },
     benchStart: { type: Date, default: null },
+    deployedAt: { type: Date, default: null },
     jobStatus: { type: String, enum: ['on_training', 'ongoing_interview', 'deployed'], default: 'on_training' },
 
     menuConfig: { type: [String], default: [] },
@@ -73,6 +74,7 @@ userSchema.methods.toSafeJSON = function () {
     skills: this.skills || [],
     contactNumber: this.contactNumber || '',
     benchStart: this.benchStart,
+    deployedAt: this.deployedAt,
     jobStatus: this.jobStatus || 'on_training',
     menuConfig: this.menuConfig || [],
     streak: this.streak || { current: 0, longest: 0, lastActiveDate: null, activeDays: [] },
