@@ -52,7 +52,7 @@ exports.record = async (req, res) => {
 exports.insights = async (req, res) => {
   try {
     const match = {};
-    if (req.user.role === 'bu') match.businessUnit = req.user._id;
+    if (req.user.role === 'bu') match.businessUnit = require('../utils/scope').buFilter(req.user);
     else if (req.user.role !== 'admin'&& req.user.role !== 'cto') return res.status(403).json({ message: 'Forbidden' });
 
     const { from, to } = req.query;

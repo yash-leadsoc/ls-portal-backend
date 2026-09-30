@@ -14,6 +14,7 @@ require('../models/Category');
 require('../models/Company');
 require('../models/InterviewMaterial');
 require('../models/Exercise');
+require('../models/User');
 
 function summary(entry) {
   const now = Date.now();

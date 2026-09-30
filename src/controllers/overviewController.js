@@ -9,11 +9,11 @@ exports.overview = async (req, res) => {
     const seesAll = role === 'admin' || role === 'cto';
     const { category } = req.query;
 
-    let buQuery = { role: 'bu' };
+    let buQuery = { role: 'bu', headOnly: { $ne: true } };
     if (seesAll) {
       if (category) buQuery.category = category;
     } else if (role === 'bu') {
-      buQuery = { _id: req.user._id };
+      buQuery = { _id: require('../utils/scope').buFilter(req.user) };
     } else if (role === 'manager') {
       buQuery = { _id: req.user.businessUnit || null };
     } else {

@@ -14,17 +14,18 @@ function clientInfo(req) {
 
 async function logAudit(req, { action, entity, entityId, entityLabel, meta, actor } = {}) {
   try {
-    const u = actor || (req && req.user) || {};
+    const u = actor || (req && req.actor) || (req && req.user) || {};
+    const actingUnit = !actor && req && req.actor && req.user ? req.user : null;
     await AuditLog.create({
       actor: u._id || null,
       actorName: u.name || '',
-      actorRole: u.role || '',
-      businessUnit: buFor(u),
+      actorRole: u.subAdmin ? 'subadmin' : u.role || '',
+      businessUnit: actingUnit ? actingUnit._id : buFor(u),
       action,
       entity: entity || '',
       entityId: entityId != null ? String(entityId) : null,
       entityLabel: entityLabel || '',
-      meta: meta || {},
+      meta: actingUnit ? { ...(meta || {}), actingFor: actingUnit.name } : meta || {},
       ...clientInfo(req),
     });
   } catch (e) {}

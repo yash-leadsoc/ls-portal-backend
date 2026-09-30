@@ -125,7 +125,7 @@ async function evaluate() {
 }
 
 async function recipients() {
-  const users = await User.find({ role: { $in: ['admin', 'cto'] }, active: true }).select('_id');
+  const users = await User.find({ role: { $in: ['admin', 'cto'] }, active: true, subAdmin: { $ne: true } }).select('_id');
   return users.map((u) => u._id);
 }
 

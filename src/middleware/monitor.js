@@ -111,12 +111,12 @@ function monitor(req, res, next) {
       const route = res.locals.route || normalizeRoute(req);
       const status = res.statusCode;
       addMetric(req.method, route, status, ms, now);
-      touchPresence(req.user, now);
+      touchPresence(req.actor || req.user, now);
 
       const isMutation = !['GET', 'HEAD'].includes(req.method);
       if (!isMutation && status < 400) return;
 
-      const u = req.user || {};
+      const u = req.actor || req.user || {};
       const err = res.locals.error;
       RequestLog.create({
         at: now,

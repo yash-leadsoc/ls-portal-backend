@@ -3,7 +3,7 @@ const { moveToTrash, archiveToTrash } = require('../utils/trash');
 const path = require('path');
 const fs = require('fs');
 const Document = require('../models/Document');
-const { buOf, seesAll, ownerScope } = require('../utils/scope');
+const { buOf, seesAll, ownerScope, contentFilter, inContent } = require('../utils/scope');
 const MaterialReview = require('../models/MaterialReview');
 const { UPLOAD_DIR } = require('../middleware/upload');
 const os = require('os');
@@ -159,7 +159,11 @@ exports.upload = async (req, res) => {
         }
       );
 
-    const _scope = await ownerScope(req.user);
+    const _scope = await ownerScope(req.user, req.body && req.body.businessUnit);
+    if (req.user.role === 'bu' && domainId) {
+      const _dom = await Domain.findById(domainId).select('businessUnit');
+      if (_dom && _dom.businessUnit && inContent(req.user, _dom.businessUnit)) _scope.businessUnit = _dom.businessUnit;
+    }
     const document = await Document.create({
       title,
       description: description || '',
@@ -256,7 +260,7 @@ exports.list = async (req, res) => {
 
     const filter = {};
 
-    if (!seesAll(req.user)) filter.businessUnit = buOf(req.user);
+    if (!seesAll(req.user)) filter.businessUnit = contentFilter(req.user);
 
     if (domainId) {
       filter.domain = domainId;
@@ -507,7 +511,11 @@ exports.createLink = async (req, res) => {
       size = Buffer.byteLength(html, 'utf8');
     }
 
-    const _scope = await ownerScope(req.user);
+    const _scope = await ownerScope(req.user, req.body && req.body.businessUnit);
+    if (req.user.role === 'bu' && domainId) {
+      const _dom = await Domain.findById(domainId).select('businessUnit');
+      if (_dom && _dom.businessUnit && inContent(req.user, _dom.businessUnit)) _scope.businessUnit = _dom.businessUnit;
+    }
     const doc = await Document.create({
       title: title.trim(),
       description: (description || '').trim(),

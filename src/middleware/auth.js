@@ -1,5 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { canActAs } = require('../utils/units');
+const { computeScope } = require('../utils/scope');
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be set in production');
@@ -28,8 +30,38 @@ async function requireAuth(req, res, next) {
     );
 
     if (!user || !user.active) return res.status(401).json({ message: 'Invalid or inactive account' });
+    if (user.loginDisabled) return res.status(401).json({ message: 'Login is disabled for this account' });
 
     req.user = user;
+
+    const personalPath = /^\/api\/(auth|notifications|insights\/track|users\/me)(\/|$)/.test((req.originalUrl || '').split('?')[0]);
+    if (user.role === 'bu' && !personalPath) {
+      const wanted = req.headers['x-unit'];
+      let unitId = null;
+      if (wanted && canActAs(user, wanted)) unitId = String(wanted);
+      else if (user.headOnly && (user.unitAccess || []).length) unitId = String(user.unitAccess[0].unit);
+      if (unitId && unitId !== String(user._id)) {
+        const unit = await User.findOne({ _id: unitId, role: 'bu', active: true }).populate('assignedDomains', 'name icon description');
+        if (unit) {
+          req.actor = user;
+          req.user = unit;
+        }
+      }
+    }
+    if (
+      req.user.role === 'employee' &&
+      req.user.trainerAccess &&
+      req.headers['x-view'] === 'trainer' &&
+      !personalPath
+    ) {
+      const asTrainer = User.hydrate({ ...req.user.toObject({ depopulate: true }), role: 'manager' });
+      asTrainer.$locals.viewingAs = 'trainer';
+      req.actor = req.actor || req.user;
+      req.user = asTrainer;
+    }
+    try {
+      await computeScope(req.user);
+    } catch (e) {}
     next();
   } catch (err) {
     return res.status(401).json({ message: 'Invalid token' });
@@ -46,4 +78,18 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { signToken, requireAuth, requireRole };
+function requireFullAdmin(req, res, next) {
+  if (!req.user || req.user.role !== 'admin' || req.user.subAdmin) {
+    return res.status(403).json({ message: 'Only the main admin can do this' });
+  }
+  next();
+}
+
+function denySubAdmin(req, res, next) {
+  if (req.user && req.user.subAdmin) {
+    return res.status(403).json({ message: 'Sub admins do not have access to this section' });
+  }
+  next();
+}
+
+module.exports = { signToken, requireAuth, requireRole, requireFullAdmin, denySubAdmin };

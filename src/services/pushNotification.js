@@ -73,10 +73,15 @@ async function createNotification({
   }
 }
 
+async function withUnitHeads(userIds) {
+  const User = require('../models/User');
+  const ids = [...new Set(userIds.map((id) => String(id)))];
+  const heads = await User.find({ role: 'bu', active: true, loginDisabled: { $ne: true }, 'unitAccess.unit': { $in: ids } }).select('_id');
+  return [...new Set([...ids, ...heads.map((h) => String(h._id))])];
+}
+
 async function notifyUsers(userIds, data) {
-  const uniqueIds = [
-    ...new Set(userIds.map((id) => String(id))),
-  ];
+  const uniqueIds = await withUnitHeads(userIds);
 
   await Promise.all(
     uniqueIds.map((userId) =>
@@ -89,7 +94,12 @@ async function notifyUsers(userIds, data) {
 }
 
 module.exports = {
-  createNotification,
+  createNotification: async (args) => {
+    const ids = await withUnitHeads([args.userId]);
+    const [first] = await Promise.all(ids.map((userId) => createNotification({ ...args, userId })));
+    return first;
+  },
+  createNotificationDirect: createNotification,
   notifyUsers,
   sendPushToUser,
 };

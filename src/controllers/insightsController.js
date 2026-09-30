@@ -21,7 +21,6 @@ const escapeRegex = require('../utils/escapeRegex');
 const { TZ, dayKey } = require('../utils/time');
 const { onlineUsers, processStats, liveMinutes, flushMetrics } = require('../middleware/monitor');
 const { dbUsage } = require('../services/alerts');
-const { benchInfo } = require('../utils/bench');
 
 const DAY = 24 * 60 * 60 * 1000;
 const clampDays = (v, def = 30) => Math.min(Math.max(Number(v) || def, 1), 365);
@@ -64,9 +63,9 @@ function weekly(dates, weeks = 12) {
 async function workforceData() {
   const [employees, bus, managers, ctos] = await Promise.all([
     User.find({ role: 'employee' })
-      .select('name employeeCode jobStatus benchStart deployedAt businessUnit skills preferredLocation assignedDomains active enrolledAt createdAt lastActiveAt lastLoginAt streak')
+      .select('name employeeCode jobStatus benchStart businessUnit skills preferredLocation assignedDomains active enrolledAt createdAt lastActiveAt lastLoginAt streak')
       .lean(),
-    User.find({ role: 'bu' }).select('name category').populate('category', 'name').lean(),
+    User.find({ role: 'bu', headOnly: { $ne: true } }).select('name category').populate('category', 'name').lean(),
     User.countDocuments({ role: 'manager', active: true }),
     User.countDocuments({ role: 'cto', active: true }),
   ]);
@@ -100,7 +99,8 @@ function workforceSection(w) {
       return;
     }
     byBU[bu].bench += 1;
-    const days = benchInfo(e).benchDays || 0;
+    const startAt = e.benchStart || e.enrolledAt || e.createdAt;
+    const days = startAt ? Math.floor((now - new Date(startAt).getTime()) / DAY) : 0;
     if (days <= 30) aging['0-30 days'] += 1;
     else if (days <= 60) aging['31-60 days'] += 1;
     else if (days <= 90) aging['61-90 days'] += 1;
@@ -429,7 +429,7 @@ async function healthSummary() {
   let db = null;
   try {
     db = await dbUsage();
-  } catch (e) { }
+  } catch (e) {}
   const p = processStats();
   return {
     requests24h: m.count,
@@ -617,7 +617,7 @@ exports.database = async (req, res) => {
     };
     out.usedMb = round1((s.dataSize + s.indexSize) / 1048576);
     out.usedPct = pct(s.dataSize + s.indexSize, out.limitMb * 1048576);
-  } catch (e) { }
+  } catch (e) {}
 
   const cols = await conn.db.listCollections({}, { nameOnly: true }).toArray();
   out.collections = (
@@ -627,14 +627,14 @@ exports.database = async (req, res) => {
         const row = { name: c.name, count: 0, sizeMb: null, indexMb: null };
         try {
           row.count = await col.estimatedDocumentCount();
-        } catch (e) { }
+        } catch (e) {}
         try {
           const [st] = await col.aggregate([{ $collStats: { storageStats: {} } }]).toArray();
           if (st && st.storageStats) {
             row.sizeMb = round1(st.storageStats.size / 1048576);
             row.indexMb = round1(st.storageStats.totalIndexSize / 1048576);
           }
-        } catch (e) { }
+        } catch (e) {}
         return row;
       })
     )
@@ -650,7 +650,11 @@ exports.alerts = async (req, res) => {
   ]);
   const w = await workforceData();
   const now = Date.now();
-    const longBench = w.active.filter((e) => e.jobStatus !== 'deployed' && (benchInfo(e).benchDays || 0) > 60).length;
+  const longBench = w.active.filter((e) => {
+    if (e.jobStatus === 'deployed') return false;
+    const s = e.benchStart || e.enrolledAt || e.createdAt;
+    return s && now - new Date(s).getTime() > 60 * DAY;
+  }).length;
   const inactive = w.active.filter((e) => !e.lastActiveAt || now - new Date(e.lastActiveAt).getTime() > 7 * DAY).length;
   const noDomains = w.active.filter((e) => !(e.assignedDomains || []).length).length;
   const overdueMocks = await MockInterview.countDocuments({ status: 'scheduled', scheduledAt: { $lt: new Date(now - DAY) } });

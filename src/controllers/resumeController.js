@@ -5,6 +5,7 @@ const Resume = require('../models/Resume');
 const User = require('../models/User');
 const cloudinary = require('../config/cloudinary');
 const { logAudit } = require('../utils/audit');
+const { inScope } = require('../utils/scope');
 
 const RESUME_EXT = ['.pdf', '.doc', '.docx'];
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -130,7 +131,7 @@ function canView(viewer, employee) {
   if (!employee) return false;
   if (viewer.role === 'admin' || viewer.role === 'cto') return true;
   if (String(viewer._id) === String(employee._id)) return true;
-  if (viewer.role === 'bu') return String(employee.businessUnit) === String(viewer._id);
+  if (viewer.role === 'bu') return inScope(viewer, employee.businessUnit);
   if (viewer.role === 'manager') {
     return (
       String(employee.manager) === String(viewer._id) ||

@@ -1,5 +1,5 @@
 const Question = require('../models/Question');
-const { buOf, seesAll, ownerScope } = require('../utils/scope');
+const { buOf, seesAll, ownerScope, buFilter } = require('../utils/scope');
 const Answer = require('../models/Answer');
 const User = require('../models/User');
 
@@ -11,7 +11,7 @@ const { logAudit } = require('../utils/audit');
 exports.listQuestions = async (req, res) => {
   try {
     const _q = {};
-    if (!seesAll(req.user)) _q.businessUnit = buOf(req.user);
+    if (!seesAll(req.user)) _q.businessUnit = buFilter(req.user);
     const questions = await Question.find(_q)
       .populate('author', 'name role')
       .sort({ createdAt: -1 });

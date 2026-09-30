@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const { benchInfo } = require('../utils/bench');
+const { buFilter, inScope } = require('../utils/scope');
 const Domain = require('../models/Domain');
 const Document = require('../models/Document');
 const Checklist = require('../models/Checklist');
@@ -280,7 +281,7 @@ exports.employeeProgress = async (req, res) => {
     const myId = String(req.user._id);
     const myBuId = String(req.user.businessUnit || '');
 
-    if (req.user.role === 'bu' && empBuId !== myId) {
+    if (req.user.role === 'bu' && !inScope(req.user, empBuId)) {
       return res.status(403).json({ message: 'Forbidden' });
     }
     if (req.user.role === 'manager' && empBuId !== myBuId && empMgrId !== myId) {
@@ -354,7 +355,7 @@ exports.employeeProgress = async (req, res) => {
 exports.exportEngineers = async (req, res) => {
   try {
     let filter = { role: 'employee', active: true };
-    if (req.user.role === 'bu') filter.businessUnit = req.user._id;
+    if (req.user.role === 'bu') filter.businessUnit = buFilter(req.user);
     else if (req.user.role === 'manager') {
       filter = req.user.businessUnit
         ? { role: 'employee', active: true, businessUnit: req.user.businessUnit }
@@ -384,8 +385,6 @@ exports.exportEngineers = async (req, res) => {
       const active = Object.values(progress).filter((d) => d.started);
       const ovs = active.map((d) => d.overall).filter((v) => v != null);
       const trainingAvg = ovs.length ? Math.round(ovs.reduce((a, b) => a + b, 0) / ovs.length) : 0;
-      // const benchFrom = e.benchStart || e.enrolledAt || e.createdAt;
-      // const benchDays = benchFrom ? Math.max(0, Math.floor((Date.now() - new Date(benchFrom).getTime()) / 86400000)) : 0;
       const bench = benchInfo(e);
       rows.push({
         lsid: e.employeeCode || '',
@@ -416,7 +415,7 @@ exports.exportEngineers = async (req, res) => {
 
 exports.cohort = async (req, res) => {
   let employeeFilter = { role: 'employee', active: true };
-  if (req.user.role === 'bu') employeeFilter.businessUnit = req.user._id;
+  if (req.user.role === 'bu') employeeFilter.businessUnit = buFilter(req.user);
   else if (req.user.role === 'manager') {
     employeeFilter = req.user.businessUnit
       ? { role: 'employee', active: true, businessUnit: req.user.businessUnit }

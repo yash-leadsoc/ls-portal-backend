@@ -1,7 +1,7 @@
 const cloudinary = require('../config/cloudinary');
 const Exercise = require('../models/Exercise');
 const ExerciseSubmission = require('../models/ExerciseSubmission');
-const { buOf } = require('../utils/scope');
+const { buOf, writeBU } = require('../utils/scope');
 const { bumpStreak } = require('../utils/streak');
 
 exports.listForDomain = async (req, res) => {
@@ -40,7 +40,7 @@ exports.create = async (req, res) => {
       link = refLink.trim();
     }
     const ex = await Exercise.create({
-      domain: domainId, businessUnit: buOf(req.user) || null,
+      domain: domainId, businessUnit: writeBU(req) || null,
       title: title.trim(), instructions: instructions || '',
       refType: type, refFileUrl, refOriginalName, refLink: link, createdBy: req.user._id,
     });

@@ -1,11 +1,11 @@
 const Domain = require('../models/Domain');
 const { logAudit } = require('../utils/audit');
-const { buOf, seesAll, ownerScope } = require('../utils/scope');
+const { buOf, seesAll, ownerScope, contentFilter } = require('../utils/scope');
 const { moveToTrash, archiveToTrash } = require('../utils/trash');
 exports.list = async (req, res) => {
   try {
     const q = { active: true };
-    if (!seesAll(req.user)) q.businessUnit = buOf(req.user);
+    if (!seesAll(req.user)) q.businessUnit = contentFilter(req.user);
     const domains = await Domain.find(q).populate('category', 'name').sort({ name: 1 });
 
     if (
@@ -54,7 +54,7 @@ exports.create = async (req, res) => {
     if (!key || !name) return res.status(400).json({ message: 'key and name are required' });
     const exists = await Domain.findOne({ key: key.toLowerCase() });
     if (exists) return res.status(409).json({ message: 'Domain key already exists' });
-    const { businessUnit, category } = await ownerScope(req.user);
+    const { businessUnit, category } = await ownerScope(req.user, req.body && req.body.businessUnit);
     const domain = await Domain.create({
       key: key.toLowerCase(),
       name,

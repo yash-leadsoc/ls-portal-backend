@@ -9,7 +9,7 @@ const Availability = require('../models/Availability');
 const InterviewHistory = require('../models/InterviewHistory');
 const User = require('../models/User');
 const { createMeet } = require('../utils/googleMeet');
-const { buOf, seesAll } = require('../utils/scope');
+const { buOf, seesAll, buFilter } = require('../utils/scope');
 const {
   createNotification,
 } = require('../services/pushNotification');
@@ -98,7 +98,7 @@ exports.listMocks = async (req, res) => {
   if (req.query.employee) q.employee = req.query.employee;
   if (!seesAll(req.user)) {
     if (req.user.role === 'employee') q.employee = req.user._id;
-    else q.businessUnit = buOf(req.user);
+    else q.businessUnit = buFilter(req.user);
   }
   const mocks = await MockInterview.find(q)
     .populate('employee', 'name employeeCode')
@@ -137,7 +137,7 @@ exports.scheduleMock = async (req, res) => {
       durationMins: Number(durationMins) || 45,
       meetLink: link,
       meetEventId: eventId,
-      businessUnit: buOf(req.user) || employee.businessUnit || null,
+      businessUnit: employee.businessUnit || buOf(req.user) || null,
     });
 
     await pushHistory({
@@ -188,7 +188,7 @@ exports.scoreMock = async (req, res) => {
 exports.listClients = async (req, res) => {
   const q = {};
   if (req.query.employee) q.employee = req.query.employee;
-  if (!seesAll(req.user)) q.businessUnit = buOf(req.user);
+  if (!seesAll(req.user)) q.businessUnit = buFilter(req.user);
   const items = await ClientInterview.find(q).populate('employee', 'name employeeCode').sort({ sentAt: -1 });
   res.json({ clients: items });
 };
@@ -203,7 +203,7 @@ exports.createClient = async (req, res) => {
     employee: employee._id, client: client.trim(), role: role || '',
     sentAt: sentAt ? new Date(sentAt) : new Date(),
     status: status || 'sent', performance: performance || '',
-    businessUnit: buOf(req.user) || employee.businessUnit || null,
+    businessUnit: employee.businessUnit || buOf(req.user) || null,
     updatedBy: req.user._id,
   });
   await pushHistory({
@@ -244,7 +244,7 @@ exports.listAvailability = async (req, res) => {
   const q = {};
   if (req.query.employee) q.employee = req.query.employee;
   else if (req.user.role === 'employee') q.employee = req.user._id;
-  else if (!seesAll(req.user)) q.businessUnit = buOf(req.user);
+  else if (!seesAll(req.user)) q.businessUnit = buFilter(req.user);
   if (req.query.month) q.date = { $regex: `^${escapeRegex(req.query.month)}` };
   const slots = await Availability.find(q).sort({ date: 1, fromTime: 1 });
   res.json({ availability: slots });

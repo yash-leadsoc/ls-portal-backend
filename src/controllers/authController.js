@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const { signToken } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { unitsFor } = require('../utils/units');
 const escapeRegex = require('../utils/escapeRegex');
 exports.login = async (req, res) => {
   try {
@@ -36,6 +37,10 @@ exports.login = async (req, res) => {
       await failed('inactive account', user);
       return res.status(403).json({ message: 'Account is inactive' });
     }
+    if (user.loginDisabled) {
+      await failed('login disabled', user);
+      return res.status(403).json({ message: 'Login is disabled for this account' });
+    }
 
     const ok = await user.verifyPassword(password);
     if (!ok) {
@@ -56,7 +61,7 @@ exports.login = async (req, res) => {
       actor: user,
     });
 
-    res.json({ token, user: user.toSafeJSON() });
+    res.json({ token, user: { ...user.toSafeJSON(), units: await unitsFor(user) } });
   } catch (err) {
     res.status(500).json({ message: 'Login failed' });
   }
@@ -71,7 +76,8 @@ exports.logout = async (req, res) => {
 };
 
 exports.me = async (req, res) => {
-  res.json({ user: req.user.toSafeJSON() });
+  const person = req.actor || req.user;
+  res.json({ user: { ...person.toSafeJSON(), units: await unitsFor(person) } });
 };
 
 exports.changePassword = async (req, res) => {

@@ -49,6 +49,7 @@ app.use(
 
 app.use(compression());
 app.use(express.json({ limit: '2mb' }));
+app.use('/api/bench/import', express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '2mb' }));
 app.use(sanitize);
 app.use(monitor);
@@ -96,6 +97,7 @@ app.use('/api/trash', require('./routes/trash'));
 app.use('/api/insights', require('./routes/insights'));
 app.use('/api/resume', require('./routes/resume'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/bench', require('./routes/bench'));
 app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 
 app.use((err, req, res, next) => {

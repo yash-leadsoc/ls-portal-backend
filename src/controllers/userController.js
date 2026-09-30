@@ -1,6 +1,7 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Domain = require('../models/Domain');
-const { buOf, seesAll } = require('../utils/scope');
+const { buOf, seesAll, buFilter, inScope, writeBU } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const { benchInfo, parseDate } = require('../utils/bench');
 
@@ -31,7 +32,39 @@ exports.createCTO = async (req, res) => {
     await user.setPassword(password);
     await user.save();
     res.status(201).json({ user: user.toSafeJSON() });
-  } catch (err) { res.status(500).json({ message: 'Could not create CTO' }); }
+  } catch (err) {  res.status(500).json({ message: 'Could not create CTO' }); }
+};
+
+exports.createSubAdmin = async (req, res) => {
+  try {
+    const { name, email, password, employeeCode } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ message: 'name, email and password are required' });
+    if (String(password).length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    if (!employeeCode || !String(employeeCode).trim()) return res.status(400).json({ message: 'Sub admin ID is required' });
+    const exists = await User.findOne({ email: String(email).toLowerCase() });
+    if (exists) return res.status(409).json({ message: 'A user with this email already exists' });
+    const codeExists = await User.findOne({ employeeCode: String(employeeCode).trim() });
+    if (codeExists) return res.status(409).json({ message: 'A user with this ID already exists' });
+    const user = new User({
+      name,
+      email: String(email).toLowerCase(),
+      employeeCode: String(employeeCode).trim(),
+      role: 'admin',
+      subAdmin: true,
+      createdBy: req.user._id,
+    });
+    await user.setPassword(password);
+    await user.save();
+    await logAudit(req, { action: 'create', entity: 'subadmin', entityId: user._id, entityLabel: user.name });
+    res.status(201).json({ user: user.toSafeJSON() });
+  } catch (err) {
+    res.status(500).json({ message: 'Could not create sub admin' });
+  }
+};
+
+exports.listSubAdmins = async (req, res) => {
+  const users = await User.find({ role: 'admin', subAdmin: true }).sort({ name: 1 });
+  res.json({ subadmins: users.map((u) => u.toSafeJSON()) });
 };
 
 exports.listCTOs = async (req, res) => {
@@ -41,30 +74,38 @@ exports.listCTOs = async (req, res) => {
 
 exports.createBU = async (req, res) => {
   try {
-    const { name, email, password, employeeCode, categoryId } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: 'name, email and password are required' });
-    }
-    if (!employeeCode || !employeeCode.trim()) {
-      return res.status(400).json({ message: 'BU ID is required' });
-    }
-    if (!categoryId) return res.status(400).json({ message: 'Category is required' });
+    const { name, password, employeeCode, categoryId } = req.body;
+    const kind = ['bu', 'unit', 'head'].includes(req.body.kind) ? req.body.kind : 'bu';
+    let email = String(req.body.email || '').trim().toLowerCase();
 
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    if (!name || !String(name).trim()) return res.status(400).json({ message: 'Name is required' });
+    if (!employeeCode || !String(employeeCode).trim()) return res.status(400).json({ message: 'BU ID is required' });
+    if (kind !== 'head' && !categoryId) return res.status(400).json({ message: 'Category is required' });
+    if (kind === 'unit') {
+      if (!email) email = `unit-${String(employeeCode).trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')}@units.leadsoc.local`;
+    } else {
+      if (!email || !password) return res.status(400).json({ message: 'Email and password are required' });
+      if (String(password).length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const exists = await User.findOne({ email });
     if (exists) return res.status(409).json({ message: 'A user with this email already exists' });
-    const codeExists = await User.findOne({ employeeCode: employeeCode.trim() });
+    const codeExists = await User.findOne({ employeeCode: String(employeeCode).trim() });
     if (codeExists) return res.status(409).json({ message: 'A user with this ID already exists' });
 
     const user = new User({
-      name,
-      email: email.toLowerCase(),
-      employeeCode: employeeCode.trim(),
+      name: String(name).trim(),
+      email,
+      employeeCode: String(employeeCode).trim(),
       role: 'bu',
-      category: categoryId,
+      category: kind === 'head' ? null : categoryId,
       createdBy: req.user._id,
+      loginDisabled: kind === 'unit',
+      headOnly: kind === 'head',
     });
-    await user.setPassword(password);
+    await user.setPassword(kind === 'unit' ? require('crypto').randomBytes(16).toString('hex') : password);
     await user.save();
+    await logAudit(req, { action: 'create', entity: kind === 'head' ? 'bu.head' : 'bu', entityId: user._id, entityLabel: user.name });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create BU' });
@@ -72,9 +113,22 @@ exports.createBU = async (req, res) => {
 };
 
 exports.listBUs = async (req, res) => {
-  const bus = await User.find({ role: 'bu' }).populate('category', 'name').sort({ name: 1 });
+  const { headsOf } = require('../utils/units');
+  const all = await User.find({ role: 'bu' })
+    .populate({ path: 'category', select: 'name parent', populate: { path: 'parent', select: 'name' } })
+    .sort({ name: 1 });
+  const units = all.filter((b) => !b.headOnly);
+  const heads = await headsOf(units.map((u) => u._id));
   res.json({
-    bus: bus.map((b) => ({ ...b.toSafeJSON(), categoryName: b.category?.name || null })),
+    bus: units.map((b) => ({
+      ...b.toSafeJSON(),
+      categoryName: b.category ? (b.category.parent ? `${b.category.parent.name} › ${b.category.name}` : b.category.name) : null,
+      isCategoryHead: !!(b.category && !b.category.parent),
+      heads: heads.get(String(b._id)) || [],
+    })),
+    headOnly: all
+      .filter((b) => b.headOnly)
+      .map((b) => ({ ...b.toSafeJSON(), categoryName: null })),
   });
 };
 exports.createManager = async (req, res) => {
@@ -92,7 +146,7 @@ exports.createManager = async (req, res) => {
     if (codeExists) return res.status(409).json({ message: 'A user with this Employee ID already exists' });
 
     let businessUnit = null;
-    if (req.user.role === 'bu') businessUnit = req.user._id;
+    if (req.user.role === 'bu') businessUnit = writeBU(req);
     else if (req.user.role === 'admin') businessUnit = req.body.businessUnit || null;
 
     const user = new User({
@@ -105,10 +159,10 @@ exports.createManager = async (req, res) => {
     });
     await user.setPassword(password);
     await user.save();
-    await logAudit(req, {
-      action: 'create', entity: 'manager',
-      entityId: user._id, entityLabel: user.name,
-    });
+     await logAudit(req, {
+    action: 'create', entity: 'manager',
+    entityId: user._id, entityLabel: user.name,
+  });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create manager' });
@@ -117,7 +171,6 @@ exports.createManager = async (req, res) => {
 
 exports.createEmployee = async (req, res) => {
   try {
-    // const { name, email, password, employeeCode, managerId } = req.body;
     const { name, email, password, employeeCode, managerId, benchStart, jobStatus } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'name, email and password are required' });
@@ -143,10 +196,13 @@ exports.createEmployee = async (req, res) => {
       manager = req.user._id;
       businessUnit = req.user.businessUnit || null;
     } else if (req.user.role === 'bu') {
-      businessUnit = req.user._id;
+      businessUnit = writeBU(req);
       manager = managerId || null;
     } else if (req.user.role === 'admin') {
-      businessUnit = req.body.businessUnit || null;
+      if (!req.body.businessUnit) return res.status(400).json({ message: 'Please select a Business Unit' });
+      const bu = await User.findOne({ _id: req.body.businessUnit, role: 'bu' }).select('_id');
+      if (!bu) return res.status(400).json({ message: 'Selected Business Unit was not found' });
+      businessUnit = bu._id;
       manager = managerId || null;
     }
 
@@ -165,10 +221,10 @@ exports.createEmployee = async (req, res) => {
     await user.setPassword(password);
     await user.save();
 
-    await logAudit(req, {
-      action: 'create', entity: 'employee',
-      entityId: user._id, entityLabel: user.name,
-    });
+     await logAudit(req, {
+    action: 'create', entity: 'employee',
+    entityId: user._id, entityLabel: user.name,
+  });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create employee' });
@@ -180,11 +236,12 @@ exports.listUsers = async (req, res) => {
     const { role } = req.query;
     let filter = {};
 
+    const roleFilter = (r) => (r === 'manager' ? { $or: [{ role: 'manager' }, { role: 'employee', trainerAccess: true }] } : { role: r });
     if (req.user.role === 'admin' || req.user.role === 'cto') {
-      if (role) filter.role = role;
+      if (role) filter = { ...roleFilter(role) };
     } else if (req.user.role === 'bu') {
-      filter = { businessUnit: req.user._id };
-      if (role) filter.role = role;
+      filter = { businessUnit: buFilter(req.user) };
+      if (role) filter = { ...filter, ...roleFilter(role) };
     } else if (req.user.role === 'manager') {
       filter = req.user.businessUnit
         ? { role: 'employee', businessUnit: req.user.businessUnit }
@@ -201,8 +258,6 @@ exports.listUsers = async (req, res) => {
     const now = Date.now();
     const rows = users.map((u) => {
       const base = u.toSafeJSON();
-      // const benchFrom = u.benchStart || u.enrolledAt || u.createdAt;
-      // const benchDays = benchFrom ? Math.max(0, Math.floor((now - new Date(benchFrom).getTime()) / 86400000)) : 0;
       return {
         ...base,
         buName: u.businessUnit?.name || null,
@@ -218,8 +273,8 @@ exports.listUsers = async (req, res) => {
 };
 
 exports.listManagers = async (req, res) => {
-  const filter = { role: 'manager' };
-  if (req.user.role === 'bu') filter.businessUnit = req.user._id;
+  const filter = { $or: [{ role: 'manager' }, { role: 'employee', trainerAccess: true }] };
+  if (req.user.role === 'bu') filter.businessUnit = buFilter(req.user);
   const managers = await User.find(filter).sort({ name: 1 });
   res.json({ managers: managers.map((m) => m.toSafeJSON()) });
 };
@@ -229,7 +284,7 @@ exports.getUser = async (req, res) => {
     .populate({ path: 'businessUnit', select: 'name category', populate: { path: 'category', select: 'name' } })
     .populate('manager', 'name');
   if (!user) return res.status(404).json({ message: 'User not found' });
-  if (req.user.role === 'bu' && String(user.businessUnit) !== String(req.user._id)) {
+  if (req.user.role === 'bu' && !inScope(req.user, user.businessUnit)) {
     return res.status(403).json({ message: 'Forbidden' });
   }
   if (
@@ -239,8 +294,6 @@ exports.getUser = async (req, res) => {
   ) {
     return res.status(403).json({ message: 'Forbidden' });
   }
-  // const benchFrom = user.benchStart || user.enrolledAt || user.createdAt;
-  // const benchDays = benchFrom ? Math.max(0, Math.floor((Date.now() - new Date(benchFrom).getTime()) / 86400000)) : 0;
   res.json({
     user: {
       ...user.toSafeJSON(),
@@ -269,7 +322,7 @@ exports.updateMyProfile = async (req, res) => {
     const u = await User.findById(req.user._id);
     if (!u) return res.status(404).json({ message: 'User not found' });
     const { preferredLocation, skills, contactNumber } = req.body;
-       if (preferredLocation != null) u.preferredLocation = String(preferredLocation).trim().slice(0, 120);
+    if (preferredLocation != null) u.preferredLocation = String(preferredLocation).trim().slice(0, 120);
     if (contactNumber != null) {
       const phone = String(contactNumber).trim();
       if (phone && !/^[+\d][\d\s()-]{6,19}$/.test(phone)) {
@@ -291,20 +344,6 @@ exports.updateMyProfile = async (req, res) => {
     res.status(500).json({ message: 'Could not update profile' });
   }
 };
-
-// exports.setStatus = async (req, res) => {
-//   try {
-//     const u = await User.findById(req.params.id);
-//     if (!u) return res.status(404).json({ message: 'User not found' });
-//     const { jobStatus, benchStart } = req.body;
-//     if (jobStatus) u.jobStatus = jobStatus;
-//     if (benchStart !== undefined) u.benchStart = benchStart ? new Date(benchStart) : null;
-//     await u.save();
-//     res.json({ user: u.toSafeJSON() });
-//   } catch (e) {
-//     res.status(500).json({ message: 'Could not update status' });
-//   }
-// };
 
 exports.setStatus = async (req, res) => {
   try {
@@ -358,12 +397,36 @@ exports.setStatus = async (req, res) => {
   }
 };
 
+function canManageUser(me, target) {
+  if (!me || !target) return false;
+  if (String(me._id) === String(target._id)) return false;
+  if (target.role === 'admin') return !!target.subAdmin && me.role === 'admin' && !me.subAdmin;
+  if (me.role === 'admin') return true;
+  if (me.role === 'bu') {
+    return ['manager', 'employee'].includes(target.role) && inScope(me, target.businessUnit);
+  }
+  if (me.role === 'manager') {
+    return (
+      target.role === 'employee' &&
+      (String(target.manager) === String(me._id) || (!!me.businessUnit && String(target.businessUnit) === String(me.businessUnit)))
+    );
+  }
+  return false;
+}
+
 exports.setActive = async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'User not found' });
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: 'User not found' });
-  if (user.role === 'admin') return res.status(400).json({ message: 'Cannot deactivate admin' });
+  if (!canManageUser(req.user, user)) return res.status(403).json({ message: 'You are not allowed to change this account' });
   user.active = !!req.body.active;
   await user.save();
+  await logAudit(req, {
+    action: user.active ? 'activate' : 'deactivate',
+    entity: user.role,
+    entityId: user._id,
+    entityLabel: user.name,
+  });
   res.json({ user: user.toSafeJSON() });
 };
 
@@ -419,10 +482,10 @@ exports.assignDomains = async (req, res) => {
       'name icon description'
     );
 
-    await logAudit(req, {
-      action: 'assign', entity: 'domain',
-      entityId: employee._id, entityLabel: employee.name,
-    });
+     await logAudit(req, {
+    action: 'assign', entity: 'domain',
+    entityId: employee._id, entityLabel: employee.name,
+  });
 
     return res.json({
       message: 'Domains assigned successfully',
@@ -435,7 +498,6 @@ exports.assignDomains = async (req, res) => {
     });
   }
 };
-
 
 const MAX_BULK_ROWS = 300;
 const BULK_STATUS = {
@@ -475,7 +537,12 @@ exports.bulkCreateEmployees = async (req, res) => {
     return res.status(400).json({ message: `Upload at most ${MAX_BULK_ROWS} engineers per file` });
   }
 
-  const businessUnit = req.user._id;
+  let businessUnit = req.user.role === 'bu' ? writeBU(req) : req.user._id;
+  if (req.user.role === 'admin') {
+    const bu = req.body.businessUnit ? await User.findOne({ _id: req.body.businessUnit, role: 'bu' }).select('_id') : null;
+    if (!bu) return res.status(400).json({ message: 'Please select a Business Unit' });
+    businessUnit = bu._id;
+  }
 
   const rows = input.map((r, i) => ({
     row: Number(r && r.row) || i + 2,
@@ -493,7 +560,7 @@ exports.bulkCreateEmployees = async (req, res) => {
 
   const [existing, trainers] = await Promise.all([
     User.find({}).select('email employeeCode').lean(),
-    User.find({ role: 'manager', businessUnit, active: true }).select('employeeCode name').lean(),
+    User.find({ $or: [{ role: 'manager' }, { role: 'employee', trainerAccess: true }], businessUnit, active: true }).select('employeeCode name').lean(),
   ]);
   const takenEmails = new Set(existing.map((u) => String(u.email || '').toLowerCase()));
   const takenCodes = new Set(existing.map((u) => String(u.employeeCode || '').toLowerCase()).filter(Boolean));
@@ -611,5 +678,335 @@ exports.bulkCreateEmployees = async (req, res) => {
     created,
     skipped: checked.length - created,
     results: summary(checked),
+  });
+};
+
+exports.updateTrainer = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Trainer not found' });
+    const trainer = await User.findById(req.params.id);
+    if (!trainer || (trainer.role !== 'manager' && !(trainer.role === 'employee' && trainer.trainerAccess))) return res.status(404).json({ message: 'Trainer not found' });
+    if (req.user.role === 'bu' && !inScope(req.user, trainer.businessUnit)) {
+      return res.status(403).json({ message: 'You can only edit trainers in your unit' });
+    }
+
+    const { name, email, employeeCode, contactNumber, businessUnit, domainIds } = req.body || {};
+
+    if (name !== undefined) {
+      const v = String(name).trim();
+      if (!v) return res.status(400).json({ message: 'Name is required' });
+      trainer.name = v.slice(0, 120);
+    }
+    if (email !== undefined) {
+      const v = String(email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return res.status(400).json({ message: 'Enter a valid email' });
+      if (v !== trainer.email) {
+        const taken = await User.findOne({ email: v, _id: { $ne: trainer._id } }).select('_id');
+        if (taken) return res.status(409).json({ message: 'A user with this email already exists' });
+        trainer.email = v;
+      }
+    }
+    if (employeeCode !== undefined) {
+      const v = String(employeeCode).trim();
+      if (!v) return res.status(400).json({ message: 'Employee ID is required' });
+      if (v !== trainer.employeeCode) {
+        const taken = await User.findOne({ employeeCode: v, _id: { $ne: trainer._id } }).select('_id');
+        if (taken) return res.status(409).json({ message: 'A user with this ID already exists' });
+        trainer.employeeCode = v.slice(0, 40);
+      }
+    }
+    if (contactNumber !== undefined) trainer.contactNumber = String(contactNumber).trim().slice(0, 30);
+    if (businessUnit !== undefined && (req.user.role === 'admin' || (req.user.role === 'bu' && inScope(req.user, businessUnit)))) {
+      const bu = mongoose.isValidObjectId(businessUnit) ? await User.findOne({ _id: businessUnit, role: 'bu' }).select('_id') : null;
+      if (!bu) return res.status(400).json({ message: 'Select a valid Business Unit' });
+      trainer.businessUnit = bu._id;
+    }
+    if (domainIds !== undefined) {
+      if (!Array.isArray(domainIds)) return res.status(400).json({ message: 'domainIds must be an array' });
+      const ids = [...new Set(domainIds.map(String))];
+      if (ids.some((id) => !mongoose.isValidObjectId(id))) return res.status(400).json({ message: 'One or more domains are invalid' });
+      const found = await Domain.find({ _id: { $in: ids }, active: true }).select('_id');
+      if (found.length !== ids.length) return res.status(400).json({ message: 'One or more domains are invalid' });
+      trainer.trainerDomains = ids;
+    }
+
+    await trainer.save();
+    await logAudit(req, { action: 'update', entity: 'trainer', entityId: trainer._id, entityLabel: trainer.name });
+
+    const fresh = await User.findById(trainer._id).populate({ path: 'businessUnit', select: 'name category', populate: { path: 'category', select: 'name' } });
+    res.json({
+      user: {
+        ...fresh.toSafeJSON(),
+        buName: fresh.businessUnit?.name || null,
+        categoryName: fresh.businessUnit?.category?.name || null,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Could not update trainer' });
+  }
+};
+
+exports.updateEngineer = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Engineer not found' });
+    const eng = await User.findById(req.params.id);
+    if (!eng || eng.role !== 'employee') return res.status(404).json({ message: 'Engineer not found' });
+
+    const me = req.user;
+    const sameUnit =
+      (me.role === 'bu' && inScope(me, eng.businessUnit)) ||
+      (me.role === 'manager' &&
+        (String(eng.manager) === String(me._id) || (!!me.businessUnit && String(eng.businessUnit) === String(me.businessUnit))));
+    if (me.role !== 'admin' && !sameUnit) return res.status(403).json({ message: 'You can only edit engineers in your unit' });
+
+    const { name, email, employeeCode, contactNumber, preferredLocation, skills, businessUnit, managerId } = req.body || {};
+
+    if (name !== undefined) {
+      const v = String(name).trim();
+      if (!v) return res.status(400).json({ message: 'Name is required' });
+      eng.name = v.slice(0, 120);
+    }
+    if (email !== undefined) {
+      const v = String(email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return res.status(400).json({ message: 'Enter a valid email' });
+      if (v !== eng.email) {
+        const taken = await User.findOne({ email: v, _id: { $ne: eng._id } }).select('_id');
+        if (taken) return res.status(409).json({ message: 'A user with this email already exists' });
+        eng.email = v;
+      }
+    }
+    if (employeeCode !== undefined) {
+      const v = String(employeeCode).trim();
+      if (!v) return res.status(400).json({ message: 'Employee ID is required' });
+      if (v !== eng.employeeCode) {
+        const taken = await User.findOne({ employeeCode: v, _id: { $ne: eng._id } }).select('_id');
+        if (taken) return res.status(409).json({ message: 'A user with this ID already exists' });
+        eng.employeeCode = v.slice(0, 40);
+      }
+    }
+    if (contactNumber !== undefined) {
+      const v = String(contactNumber).trim();
+      if (v && !/^[+\d][\d\s()-]{6,19}$/.test(v)) return res.status(400).json({ message: 'Enter a valid contact number' });
+      eng.contactNumber = v;
+    }
+    if (preferredLocation !== undefined) eng.preferredLocation = String(preferredLocation).trim().slice(0, 120);
+    if (skills !== undefined) {
+      const listIn = Array.isArray(skills) ? skills : String(skills).split(',');
+      const seen = new Set();
+      eng.skills = listIn
+        .map((x) => String(x || '').trim().slice(0, 80))
+        .filter((x) => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase()))
+        .slice(0, 60);
+    }
+
+    if (businessUnit !== undefined && (me.role === 'admin' || (me.role === 'bu' && inScope(me, businessUnit)))) {
+      const bu = mongoose.isValidObjectId(businessUnit) ? await User.findOne({ _id: businessUnit, role: 'bu' }).select('_id') : null;
+      if (!bu) return res.status(400).json({ message: 'Select a valid Business Unit' });
+      if (String(eng.businessUnit) !== String(bu._id)) {
+        eng.businessUnit = bu._id;
+        if (managerId === undefined) eng.manager = null;
+      }
+    }
+
+    if (managerId !== undefined && me.role !== 'manager') {
+      if (!managerId) {
+        eng.manager = null;
+      } else {
+        const trainer = mongoose.isValidObjectId(managerId)
+          ? await User.findOne({ _id: managerId, active: true, $or: [{ role: 'manager' }, { role: 'employee', trainerAccess: true }] }).select('_id businessUnit')
+          : null;
+        if (!trainer) return res.status(400).json({ message: 'Select a valid trainer' });
+        if (eng.businessUnit && String(trainer.businessUnit) !== String(eng.businessUnit)) {
+          return res.status(400).json({ message: 'The trainer must belong to the same Business Unit as the engineer' });
+        }
+        eng.manager = trainer._id;
+      }
+    }
+
+    await eng.save();
+    await logAudit(req, { action: 'update', entity: 'employee', entityId: eng._id, entityLabel: eng.name });
+
+    const fresh = await User.findById(eng._id)
+      .populate({ path: 'businessUnit', select: 'name category', populate: { path: 'category', select: 'name' } })
+      .populate('manager', 'name');
+    res.json({
+      user: {
+        ...fresh.toSafeJSON(),
+        buName: fresh.businessUnit?.name || null,
+        categoryName: fresh.businessUnit?.category?.name || null,
+        trainerName: fresh.manager?.name || null,
+        ...benchInfo(fresh),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Could not update engineer' });
+  }
+};
+
+
+exports.listBUHeads = async (req, res) => {
+  const people = await User.find({ role: 'bu', active: true, loginDisabled: { $ne: true } })
+    .populate('category', 'name')
+    .sort({ name: 1 });
+  res.json({
+    heads: people.map((p) => ({
+      id: p._id,
+      name: p.name,
+      email: p.email,
+      employeeCode: p.employeeCode,
+      headOnly: !!p.headOnly,
+      categoryName: p.category?.name || null,
+    })),
+  });
+};
+
+exports.addUnitHead = async (req, res) => {
+  const { headId } = req.body || {};
+  const type = req.body.type === 'temporary' ? 'temporary' : 'permanent';
+  if (!mongoose.isValidObjectId(req.params.id) || !mongoose.isValidObjectId(headId)) {
+    return res.status(400).json({ message: 'Select a valid BU and BU head' });
+  }
+  if (String(req.params.id) === String(headId)) return res.status(400).json({ message: 'A BU is already the head of its own category' });
+  const unit = await User.findOne({ _id: req.params.id, role: 'bu', headOnly: { $ne: true } });
+  if (!unit) return res.status(404).json({ message: 'BU not found' });
+  const head = await User.findOne({ _id: headId, role: 'bu', active: true });
+  if (!head) return res.status(404).json({ message: 'BU head not found' });
+  if (head.loginDisabled) return res.status(400).json({ message: 'This account has login disabled and cannot be a head' });
+
+  const existing = (head.unitAccess || []).find((a) => String(a.unit) === String(unit._id));
+  if (existing) existing.type = type;
+  else head.unitAccess.push({ unit: unit._id, type, since: new Date() });
+  await head.save();
+  await logAudit(req, {
+    action: 'assign',
+    entity: 'bu.head',
+    entityId: unit._id,
+    entityLabel: `${head.name} → ${unit.name} (${type})`,
+  });
+  res.json({ message: `${head.name} is now a ${type} head of ${unit.name}` });
+};
+
+exports.removeUnitHead = async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id) || !mongoose.isValidObjectId(req.params.headId)) {
+    return res.status(400).json({ message: 'Invalid request' });
+  }
+  const head = await User.findOne({ _id: req.params.headId, role: 'bu' });
+  if (!head) return res.status(404).json({ message: 'BU head not found' });
+  const before = (head.unitAccess || []).length;
+  head.unitAccess = (head.unitAccess || []).filter((a) => String(a.unit) !== String(req.params.id));
+  if (head.unitAccess.length === before) return res.status(404).json({ message: 'This person is not a head of that BU' });
+  await head.save();
+  const unit = await User.findById(req.params.id).select('name');
+  await logAudit(req, { action: 'remove', entity: 'bu.head', entityId: req.params.id, entityLabel: `${head.name} ✕ ${unit ? unit.name : ''}` });
+  res.json({ message: 'Head removed' });
+};
+
+exports.setUnitLogin = async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'BU not found' });
+  const unit = await User.findOne({ _id: req.params.id, role: 'bu' });
+  if (!unit) return res.status(404).json({ message: 'BU not found' });
+  unit.loginDisabled = !!req.body.loginDisabled;
+  await unit.save();
+  await logAudit(req, {
+    action: 'update',
+    entity: 'bu.login',
+    entityId: unit._id,
+    entityLabel: `${unit.name}: login ${unit.loginDisabled ? 'disabled' : 'enabled'}`,
+  });
+  res.json({ user: unit.toSafeJSON() });
+};
+
+
+exports.deleteUser = async (req, res) => {
+  const { moveToTrash } = require('../utils/trash');
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'User not found' });
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  if (req.user.role === 'manager' || !canManageUser(req.user, user)) {
+    return res.status(403).json({ message: 'You are not allowed to delete this account' });
+  }
+
+  if (user.role === 'bu' && !user.headOnly) {
+    const [engineers, trainers, domains] = await Promise.all([
+      User.countDocuments({ role: 'employee', businessUnit: user._id }),
+      User.countDocuments({ role: 'manager', businessUnit: user._id }),
+      Domain.countDocuments({ businessUnit: user._id, active: true }),
+    ]);
+    if (engineers || trainers || domains) {
+      return res.status(409).json({
+        message: `This BU still has ${engineers} engineer(s), ${trainers} trainer(s) and ${domains} domain(s). Move them to another BU first, or deactivate the BU instead.`,
+      });
+    }
+    await User.updateMany({ 'unitAccess.unit': user._id }, { $pull: { unitAccess: { unit: user._id } } });
+  }
+
+  let unassigned = 0;
+  if (user.role === 'manager') {
+    const r = await User.updateMany({ role: 'employee', manager: user._id }, { $set: { manager: null } });
+    unassigned = r.modifiedCount || 0;
+  }
+
+  const roleLabel = { employee: 'Engineer', manager: 'Trainer', bu: 'BU', cto: 'CTO', admin: 'Sub admin' }[user.role] || 'User';
+  await moveToTrash(req, {
+    entity: 'user',
+    label: `${roleLabel}: ${user.name} (${user.employeeCode || user.email})`,
+    docs: [{ model: 'User', doc: user }],
+  });
+  try {
+    await require('../models/PushSubscription').deleteMany({ user: user._id });
+  } catch (e) {}
+
+  res.json({
+    message:
+      `${roleLabel} moved to the Recycle Bin. An admin can restore it within 30 days.` +
+      (unassigned ? ` ${unassigned} engineer(s) no longer have a trainer.` : ''),
+  });
+};
+
+
+exports.myScope = async (req, res) => {
+  const u = req.user;
+  if (u.role !== 'bu') return res.json({ isCategoryHead: false, units: [] });
+  const ids = (u.$locals && u.$locals.buScope) || [u._id];
+  const units = await User.find({ _id: { $in: ids } }).populate('category', 'name parent').select('name category');
+  res.json({
+    isCategoryHead: !!(u.$locals && u.$locals.isCategoryHead),
+    activeUnit: { id: u._id, name: u.name },
+    units: units.map((x) => ({
+      id: x._id,
+      name: x.name,
+      categoryName: x.category?.name || null,
+      level: String(x._id) === String(u._id) ? 'category' : 'sub',
+    })),
+  });
+};
+
+
+exports.setTrainerAccess = async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Engineer not found' });
+  const eng = await User.findById(req.params.id);
+  if (!eng || eng.role !== 'employee') return res.status(404).json({ message: 'Engineer not found' });
+  if (!['admin', 'bu'].includes(req.user.role) || !canManageUser(req.user, eng)) {
+    return res.status(403).json({ message: 'You are not allowed to change this engineer' });
+  }
+  const enabled = !!req.body.enabled;
+  eng.trainerAccess = enabled;
+  let unassigned = 0;
+  if (!enabled) {
+    const r = await User.updateMany({ role: 'employee', manager: eng._id }, { $set: { manager: null } });
+    unassigned = r.modifiedCount || 0;
+  }
+  await eng.save();
+  await logAudit(req, {
+    action: enabled ? 'assign' : 'remove',
+    entity: 'trainer.access',
+    entityId: eng._id,
+    entityLabel: `${eng.name}: ${enabled ? 'can also work as trainer' : 'trainer access removed'}`,
+  });
+  res.json({
+    user: eng.toSafeJSON(),
+    message: enabled
+      ? `${eng.name} can now switch to Trainer view`
+      : `Trainer access removed${unassigned ? `; ${unassigned} engineer(s) no longer have a trainer` : ''}`,
   });
 };
