@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     employeeCode: { type: String, trim: true },
     passwordHash: { type: String, required: true },
+    passwordView: { type: String, default: null, select: false },
     role: { type: String, enum: ROLES, required: true },
 
     assignedDomains: [
@@ -63,6 +64,7 @@ const userSchema = new mongoose.Schema(
 
 userSchema.methods.setPassword = async function (plain) {
   this.passwordHash = await bcrypt.hash(plain, 10);
+  this.passwordView = require('../utils/secretBox').encrypt(plain);
 };
 
 userSchema.methods.verifyPassword = function (plain) {

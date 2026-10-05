@@ -7,7 +7,10 @@ exports.overview = async (req, res) => {
   try {
     const role = req.user.role;
     const seesAll = role === 'admin' || role === 'cto';
-    const { category } = req.query;
+     const { category } = req.query;
+    const view = ['bench', 'deployed'].includes(req.query.view) ? req.query.view : 'all';
+    const statusFilter =
+      view === 'bench' ? { jobStatus: { $in: ['on_training', 'ongoing_interview'] } } : view === 'deployed' ? { jobStatus: 'deployed' } : {};
 
     let buQuery = { role: 'bu', headOnly: { $ne: true } };
     if (seesAll) {
@@ -28,12 +31,14 @@ exports.overview = async (req, res) => {
     const scoped = seesAll && !category ? {} : { businessUnit: { $in: buIds } };
     const scopedBU = scoped.businessUnit ? { businessUnit: { $in: buIds } } : {};
 
-    const [employees, trainers, ctoCount, mocks, clients, domainsCount] = await Promise.all([
-      User.find({ role: 'employee', active: true, ...scoped }).select('jobStatus businessUnit'),
+       const employees = await User.find({ role: 'employee', active: true, ...scoped, ...statusFilter }).select('jobStatus businessUnit');
+    const byEmployee = view === 'all' ? {} : { employee: { $in: employees.map((e) => e._id) } };
+
+    const [trainers, ctoCount, mocks, clients, domainsCount] = await Promise.all([
       User.countDocuments({ role: 'manager', ...scoped }),
       seesAll ? User.countDocuments({ role: 'cto' }) : Promise.resolve(0),
-      MockInterview.find(scopedBU).select('status score scheduledAt'),
-      ClientInterview.find(scopedBU).select('status'),
+      MockInterview.find({ ...scopedBU, ...byEmployee }).select('status score scheduledAt'),
+      ClientInterview.find({ ...scopedBU, ...byEmployee }).select('status'),
       Domain.countDocuments(scoped.businessUnit ? { active: true, businessUnit: { $in: buIds } } : { active: true }),
     ]);
 

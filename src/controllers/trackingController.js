@@ -431,7 +431,8 @@ exports.cohort = async (req, res) => {
       id: emp._id,
       name: emp.name,
       employeeCode: emp.employeeCode,
-      daysEnrolled: daysEnrolled(emp),
+       daysEnrolled: daysEnrolled(emp),
+      assignedDomains: (emp.assignedDomains || []).map((d) => String(d._id || d)),
       domains: progress,
     });
   }

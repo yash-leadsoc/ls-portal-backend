@@ -1010,3 +1010,23 @@ exports.setTrainerAccess = async (req, res) => {
       : `Trainer access removed${unassigned ? `; ${unassigned} engineer(s) no longer have a trainer` : ''}`,
   });
 };
+
+
+exports.viewPassword = async (req, res) => {
+  const box = require('../utils/secretBox');
+  if (!box.enabled()) {
+    return res.status(400).json({ message: 'Password viewing is not set up on the server (PASSWORD_VIEW_KEY is missing).' });
+  }
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'User not found' });
+  const user = await User.findById(req.params.id).select('+passwordView name employeeCode role');
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  if (user.role === 'admin' && !user.subAdmin) return res.status(403).json({ message: 'The main admin password cannot be viewed' });
+  const password = box.decrypt(user.passwordView);
+  await logAudit(req, { action: 'password.view', entity: user.role, entityId: user._id, entityLabel: user.name });
+  if (!password) {
+    return res.status(404).json({
+      message: 'Not available — this password was set before password viewing was enabled. Reset it once and it will be viewable.',
+    });
+  }
+  res.json({ password });
+};

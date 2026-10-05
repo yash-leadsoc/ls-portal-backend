@@ -31,6 +31,7 @@ router.get('/managers', requireRole('admin', 'cto', 'bu'), ctrl.listManagers);
 router.patch('/:id/trainer', requireRole('admin', 'bu'), ctrl.updateTrainer);
 router.patch('/:id/engineer', requireRole('admin', 'bu', 'manager'), ctrl.updateEngineer);
 router.patch('/:id/trainer-access', requireRole('admin', 'bu'), ctrl.setTrainerAccess);
+router.get('/:id/password', requireFullAdmin, ctrl.viewPassword);
 router.patch('/:id/domains', requireRole('admin', 'bu', 'manager'), notifyAfter('domains.assigned'), ctrl.assignDomains);
 router.get('/:id', requireRole('admin', 'cto', 'bu', 'manager'), ctrl.getUser);
 router.patch('/:id/active', requireRole('admin', 'bu', 'manager'), ctrl.setActive);

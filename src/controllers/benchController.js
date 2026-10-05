@@ -118,7 +118,7 @@ function shapeRecord(r, { commentLimit = 12 } = {}) {
 }
 
 function generatePassword() {
-  return `Ls@${crypto.randomBytes(4).toString('hex')}`;
+  return  '123456';
 }
 
 async function runPool(items, size, worker) {
