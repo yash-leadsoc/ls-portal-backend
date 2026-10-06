@@ -1,11 +1,12 @@
 const router = require('express').Router();
 const ctrl = require('../controllers/insightsController');
-const { requireAuth, requireRole, denySubAdmin } = require('../middleware/auth');
+const { requireAuth, requireRole, denySubAdmin, mgmtCan } = require('../middleware/auth');
+
 router.use(requireAuth);
 
 router.post('/track', ctrl.track);
 
-router.use(requireRole('admin', 'cto'), denySubAdmin);
+router.use(requireRole('admin', 'cto'), denySubAdmin, mgmtCan('insights'));
 router.get('/overview', ctrl.overview);
 router.get('/activity', ctrl.activity);
 router.get('/performance', ctrl.performance);

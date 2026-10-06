@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { canActAs } = require('../utils/units');
 const { computeScope } = require('../utils/scope');
+const { effectivePerms } = require('../utils/mgmtPerms');
 
 if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('JWT_SECRET must be set in production');
@@ -62,6 +63,13 @@ async function requireAuth(req, res, next) {
     try {
       await computeScope(req.user);
     } catch (e) {}
+    if (req.user.role === 'cto') {
+      try {
+        req.user.$locals.perms = await effectivePerms(req.user);
+      } catch (e) {
+        req.user.$locals.perms = [];
+      }
+    }
     next();
   } catch (err) {
     return res.status(401).json({ message: 'Invalid token' });
@@ -92,4 +100,13 @@ function denySubAdmin(req, res, next) {
   next();
 }
 
-module.exports = { signToken, requireAuth, requireRole, requireFullAdmin, denySubAdmin };
+function mgmtCan(key) {
+  return (req, res, next) => {
+    if (!req.user || req.user.role !== 'cto') return next();
+    const perms = (req.user.$locals && req.user.$locals.perms) || [];
+    if (perms.includes(key)) return next();
+    return res.status(403).json({ message: 'Your management access does not include this section' });
+  };
+}
+
+module.exports = { signToken, requireAuth, requireRole, requireFullAdmin, denySubAdmin, mgmtCan };

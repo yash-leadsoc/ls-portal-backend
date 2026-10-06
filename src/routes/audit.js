@@ -1,11 +1,11 @@
 const router = require('express').Router();
 const ctrl = require('../controllers/auditController');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, mgmtCan } = require('../middleware/auth');
 
 router.use(requireAuth);
 
-router.get('/', requireRole('admin', 'cto', 'bu', 'manager'), ctrl.list);
+router.get('/', requireRole('admin', 'cto', 'bu', 'manager'), mgmtCan('activity'), ctrl.list);
 router.post('/event', ctrl.record); 
-router.get('/insights', requireRole('admin', 'cto', 'bu'), ctrl.insights);
+router.get('/insights', requireRole('admin', 'cto', 'bu'), mgmtCan('activity'), ctrl.insights);
 
 module.exports = router;

@@ -45,6 +45,8 @@ const userSchema = new mongoose.Schema(
     loginDisabled: { type: Boolean, default: false },
     headOnly: { type: Boolean, default: false },
     trainerAccess: { type: Boolean, default: false },
+    designation: { type: String, default: '' },
+    permissions: { type: [String], default: undefined },
     jobStatus: { type: String, enum: ['on_training', 'ongoing_interview', 'deployed'], default: 'on_training' },
 
     menuConfig: { type: [String], default: [] },
@@ -96,6 +98,8 @@ userSchema.methods.toSafeJSON = function () {
     loginDisabled: !!this.loginDisabled,
     headOnly: !!this.headOnly,
     trainerAccess: !!this.trainerAccess,
+    designation: this.role === 'cto' ? this.designation || 'CTO' : this.designation || '',
+    customPermissions: Array.isArray(this.permissions) && this.permissions.length ? this.permissions : null,
     jobStatus: this.jobStatus || 'on_training',
     menuConfig: this.menuConfig || [],
     streak: this.streak || { current: 0, longest: 0, lastActiveDate: null, activeDays: [] },

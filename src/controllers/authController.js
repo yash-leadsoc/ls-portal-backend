@@ -61,7 +61,8 @@ exports.login = async (req, res) => {
       actor: user,
     });
 
-    res.json({ token, user: { ...user.toSafeJSON(), units: await unitsFor(user) } });
+    const { effectivePerms } = require('../utils/mgmtPerms');
+    res.json({ token, user: { ...user.toSafeJSON(), units: await unitsFor(user), permissions: await effectivePerms(user) } });
   } catch (err) {
     res.status(500).json({ message: 'Login failed' });
   }
@@ -77,7 +78,8 @@ exports.logout = async (req, res) => {
 
 exports.me = async (req, res) => {
   const person = req.actor || req.user;
-  res.json({ user: { ...person.toSafeJSON(), units: await unitsFor(person) } });
+  const { effectivePerms } = require('../utils/mgmtPerms');
+  res.json({ user: { ...person.toSafeJSON(), units: await unitsFor(person), permissions: await effectivePerms(person) } });
 };
 
 exports.changePassword = async (req, res) => {

@@ -19,20 +19,22 @@ function genCode(role) {
 exports.createCTO = async (req, res) => {
   try {
     const { name, email, password, employeeCode } = req.body;
+    const designation = String(req.body.designation || 'CTO').trim().slice(0, 40) || 'CTO';
     if (!name || !email || !password) return res.status(400).json({ message: 'name, email and password are required' });
-    if (!employeeCode || !employeeCode.trim()) return res.status(400).json({ message: 'CTO ID is required' });
+    if (!employeeCode || !employeeCode.trim()) return res.status(400).json({ message: 'Employee ID is required' });
     const exists = await User.findOne({ email: email.toLowerCase() });
     if (exists) return res.status(409).json({ message: 'A user with this email already exists' });
     const codeExists = await User.findOne({ employeeCode: employeeCode.trim() });
     if (codeExists) return res.status(409).json({ message: 'A user with this ID already exists' });
     const user = new User({
       name, email: email.toLowerCase(), employeeCode: employeeCode.trim(),
-      role: 'cto', createdBy: req.user._id,
+      role: 'cto', createdBy: req.user._id, designation,
     });
     await user.setPassword(password);
     await user.save();
+    await logAudit(req, { action: 'create', entity: 'management', entityId: user._id, entityLabel: `${user.name} (${designation})` });
     res.status(201).json({ user: user.toSafeJSON() });
-  } catch (err) {  res.status(500).json({ message: 'Could not create CTO' }); }
+  } catch (err) {  res.status(500).json({ message: 'Could not create management user' }); }
 };
 
 exports.createSubAdmin = async (req, res) => {
@@ -68,8 +70,12 @@ exports.listSubAdmins = async (req, res) => {
 };
 
 exports.listCTOs = async (req, res) => {
+  const { getProfiles, effectivePerms } = require('../utils/mgmtPerms');
+  const profiles = await getProfiles();
   const ctos = await User.find({ role: 'cto' }).sort({ name: 1 });
-  res.json({ ctos: ctos.map((c) => c.toSafeJSON()) });
+  const out = [];
+  for (const c of ctos) out.push({ ...c.toSafeJSON(), permissions: await effectivePerms(c, profiles) });
+  res.json({ ctos: out });
 };
 
 exports.createBU = async (req, res) => {
@@ -1029,4 +1035,40 @@ exports.viewPassword = async (req, res) => {
     });
   }
   res.json({ password });
+};
+
+
+exports.getMgmtProfiles = async (req, res) => {
+  const { PERMS, DESIGNATIONS, getProfiles } = require('../utils/mgmtPerms');
+  const profiles = await getProfiles();
+  const used = await User.distinct('designation', { role: 'cto' });
+  const designations = [...new Set([...DESIGNATIONS, ...Object.keys(profiles).filter((d) => d !== 'default'), ...used.filter(Boolean)])];
+  res.json({ perms: PERMS.map(([key, label]) => ({ key, label })), designations, profiles });
+};
+
+exports.saveMgmtProfiles = async (req, res) => {
+  const { saveProfiles } = require('../utils/mgmtPerms');
+  if (!req.body || typeof req.body.profiles !== 'object') return res.status(400).json({ message: 'profiles are required' });
+  const profiles = await saveProfiles(req.body.profiles, req.user._id);
+  await logAudit(req, { action: 'update', entity: 'management.access', entityLabel: 'Access by designation' });
+  res.json({ profiles, message: 'Access saved' });
+};
+
+exports.updateManagement = async (req, res) => {
+  const { clean, effectivePerms } = require('../utils/mgmtPerms');
+  if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'User not found' });
+  const u = await User.findById(req.params.id);
+  if (!u || u.role !== 'cto') return res.status(404).json({ message: 'Management user not found' });
+  if (req.body.designation !== undefined) {
+    const d = String(req.body.designation || '').trim().slice(0, 40);
+    if (!d) return res.status(400).json({ message: 'Designation is required' });
+    u.designation = d;
+  }
+  if (req.body.permissions !== undefined) {
+    u.permissions = req.body.permissions === null ? undefined : clean(req.body.permissions);
+    if (Array.isArray(u.permissions) && !u.permissions.length) u.permissions = undefined;
+  }
+  await u.save();
+  await logAudit(req, { action: 'update', entity: 'management', entityId: u._id, entityLabel: `${u.name} (${u.designation || 'CTO'})` });
+  res.json({ user: { ...u.toSafeJSON(), permissions: await effectivePerms(u) } });
 };
