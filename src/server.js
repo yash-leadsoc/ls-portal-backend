@@ -74,6 +74,15 @@ const assistantLimiter = rateLimit({
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'leadsoc-portal', time: new Date() }));
 
 app.use('/api/auth/login', loginLimiter);
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.OTP_RATE_LIMIT || 10),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { message: 'Too many password reset requests. Please try again later.' },
+});
+app.use('/api/auth/forgot-password', otpLimiter);
+app.use('/api/auth/reset-password', otpLimiter);
 app.use('/api/assistant', assistantLimiter);
 
 app.use('/api/auth', require('./routes/auth'));

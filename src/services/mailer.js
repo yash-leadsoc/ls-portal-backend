@@ -87,4 +87,34 @@ function openSender(sender) {
   };
 }
 
-module.exports = { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender };
+const SYSTEM_KEY = 'mail_system_user';
+
+async function systemSender() {
+  const User = require('../models/User');
+  const doc = await Setting.findOne({ key: SYSTEM_KEY }).lean();
+  if (doc && doc.value) {
+    const s = await senderFor(doc.value);
+    if (!s.error) return s;
+  }
+  const admins = await User.find({ role: 'admin', subAdmin: { $ne: true }, active: true }).select('_id').lean();
+  for (const a of admins) {
+    const s = await senderFor(a._id);
+    if (!s.error && s.own) return s;
+  }
+  const server = await getServer();
+  if (server && server.source === 'env' && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    return { server, user: process.env.SMTP_USER, pass: process.env.SMTP_PASS, from: process.env.SMTP_FROM || process.env.SMTP_USER };
+  }
+  return { error: 'No mailbox is set up for system emails' };
+}
+
+async function setSystemSender(userId) {
+  await Setting.findOneAndUpdate({ key: SYSTEM_KEY }, { $set: { value: userId ? String(userId) : null } }, { upsert: true });
+}
+
+async function getSystemSenderId() {
+  const doc = await Setting.findOne({ key: SYSTEM_KEY }).lean();
+  return doc && doc.value ? String(doc.value) : null;
+}
+
+module.exports = { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender, systemSender, setSystemSender, getSystemSenderId };

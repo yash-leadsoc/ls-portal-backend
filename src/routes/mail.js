@@ -8,6 +8,7 @@ router.get('/config', ctrl.config);
 router.put('/server', ctrl.saveServer);
 router.put('/account', ctrl.saveAccount);
 router.delete('/account', ctrl.removeAccount);
+router.put('/system-sender', ctrl.useForSystem);
 router.get('/recipients', ctrl.recipients);
 router.post('/preview', ctrl.preview);
 router.post('/send', ctrl.send);

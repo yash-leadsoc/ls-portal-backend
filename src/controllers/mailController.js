@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const EmailCampaign = require('../models/EmailCampaign');
 const MailAccount = require('../models/MailAccount');
-const { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender } = require('../services/mailer');
+const { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender, setSystemSender, getSystemSenderId } = require('../services/mailer');
 const { encrypt } = require('../utils/mailCrypto');
 const { logAudit } = require('../utils/audit');
 
@@ -16,41 +16,11 @@ const GROUPS = {
 const ROLE_LABEL = { bu: 'Business Unit', manager: 'Trainer', cto: 'CTO', employee: 'Engineer', admin: 'Admin' };
 const MAX_RECIPIENTS = 2000;
 
-// const esc = (s) =>
-//   String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-// function personalize(template, r, html) {
-//   const vals = {
-//     name: r.name || '',
-//     firstName: String(r.name || '').trim().split(/\s+/)[0] || '',
-//     email: r.email || '',
-//     employeeCode: r.employeeCode || '',
-//     role: r.roleLabel || '',
-//     bu: r.buName || '',
-//   };
-//   const src = html ? esc(template) : template;
-//   return src.replace(/\{\{\s*(name|firstName|email|employeeCode|role|bu)\s*\}\}/g, (_, k) => (html ? esc(vals[k]) : vals[k]));
-// }
-
-// function toHtml(body, r, senderName) {
-//   const inner = personalize(body, r, true)
-//     .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')
-//     .replace(/\r?\n/g, '<br>');
-//   return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1f2937;">${inner}<br><br><span style="color:#64748b;font-size:12px;">Sent by ${esc(senderName)} via LeadSoC TEDP</span></body></html>`;
-// }
-
-
 const esc = (s) =>
-  String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-
-function getPersonalizationValues(r) {
-  return {
+function personalize(template, r, html) {
+  const vals = {
     name: r.name || '',
     firstName: String(r.name || '').trim().split(/\s+/)[0] || '',
     email: r.email || '',
@@ -58,63 +28,16 @@ function getPersonalizationValues(r) {
     role: r.roleLabel || '',
     bu: r.buName || '',
   };
+  const src = html ? esc(template) : template;
+  return src.replace(/\{\{\s*(name|firstName|email|employeeCode|role|bu)\s*\}\}/g, (_, k) => (html ? esc(vals[k]) : vals[k]));
 }
 
-
-/*
- * Plain-text email personalization
- */
-function personalize(template, r) {
-  const vals = getPersonalizationValues(r);
-
-  return String(template || '').replace(
-    /\{\{\s*(name|firstName|email|employeeCode|role|bu)\s*\}\}/g,
-    (_, key) => vals[key]
-  );
-}
-
-
-/*
- * Normal plain-text email -> HTML
- */
 function toHtml(body, r, senderName) {
-  const inner = personalize(body, r)
-    .replace(
-      /(https?:\/\/[^\s<]+)/g,
-      '<a href="$1">$1</a>'
-    )
+  const inner = personalize(body, r, true)
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')
     .replace(/\r?\n/g, '<br>');
-
-  return `
-<!doctype html>
-<html>
-<body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1f2937;">
-${inner}
-<br><br>
-<span style="color:#64748b;font-size:12px;">
-Sent by ${esc(senderName)} via LeadSoc TEDP
-</span>
-</body>
-</html>`;
+  return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1f2937;">${inner}<br><br><span style="color:#64748b;font-size:12px;">Sent by ${esc(senderName)} via LeadSoC TEDP</span></body></html>`;
 }
-
-
-/*
- * HTML email personalization.
- *
- * IMPORTANT:
- * The HTML structure is preserved.
- * Only personalization values are escaped.
- */
-function toHtmlEmail(template, r) {
-  const vals = getPersonalizationValues(r);
-
-  return String(template || '').replace(
-    /\{\{\s*(name|firstName|email|employeeCode|role|bu)\s*\}\}/g,
-    (_, key) => esc(vals[key])
-  );
-}
-
 
 async function loadRecipients(group) {
   const filter = { active: true, headOnly: { $ne: true }, ...(GROUPS[group] || GROUPS.all) };
@@ -142,7 +65,14 @@ exports.config = async (req, res) => {
   const [server, acc] = await Promise.all([getServer(), MailAccount.findOne({ user: me._id }).lean()]);
   const envFallback = !acc && server && server.source === 'env' && process.env.SMTP_USER && process.env.SMTP_PASS;
   const sendsAs = acc ? acc.smtpUser : envFallback ? process.env.SMTP_FROM || process.env.SMTP_USER : null;
+  const systemId = await getSystemSenderId();
+  let systemSender = null;
+  if (systemId) {
+    const [su, sa] = await Promise.all([User.findById(systemId).select('name').lean(), MailAccount.findOne({ user: systemId }).lean()]);
+    if (su && sa) systemSender = { id: systemId, name: su.name, email: sa.smtpUser, isMe: systemId === String(me._id) };
+  }
   res.json({
+    systemSender,
     server: server ? { host: server.host, port: server.port, secure: !!server.secure, source: server.source } : null,
     canEditServer: me.role === 'admin' && !me.subAdmin,
     account: acc ? { smtpUser: acc.smtpUser, verifiedAt: acc.verifiedAt } : null,
@@ -191,6 +121,16 @@ exports.saveAccount = async (req, res) => {
   res.json({ message: 'Mailbox connected', account: { smtpUser, verifiedAt: new Date() } });
 };
 
+exports.useForSystem = async (req, res) => {
+  const me = person(req);
+  if (!(me.role === 'admin' && !me.subAdmin)) return res.status(403).json({ message: 'Only the main admin can choose the system mailbox' });
+  const acc = await MailAccount.findOne({ user: me._id }).lean();
+  if (!acc) return res.status(400).json({ message: 'Connect your mailbox first' });
+  await setSystemSender(me._id);
+  await logAudit(req, { action: 'update', entity: 'mail.system', entityLabel: acc.smtpUser });
+  res.json({ message: `Password-reset codes will be sent from ${acc.smtpUser}` });
+};
+
 exports.removeAccount = async (req, res) => {
   const me = person(req);
   await MailAccount.deleteOne({ user: me._id });
@@ -206,10 +146,8 @@ exports.recipients = async (req, res) => {
 
 exports.send = async (req, res) => {
   const subject = String(req.body.subject || '').trim().slice(0, 200);
-  const body = String(req.body.body || '').trim().slice(0, 100000);
-  const isHtml = req.body.isHtml === true;
+  const body = String(req.body.body || '').trim().slice(0, 20000);
   const group = GROUPS[req.body.group] ? req.body.group : 'all';
-
   const ids = Array.isArray(req.body.userIds) ? req.body.userIds.filter((id) => mongoose.isValidObjectId(id)) : null;
   if (!subject) return res.status(400).json({ message: 'Subject is required' });
   if (!body) return res.status(400).json({ message: 'Message is required' });
@@ -229,7 +167,6 @@ exports.send = async (req, res) => {
   const campaign = await EmailCampaign.create({
     subject,
     body,
-    isHtml,
     audience: ids ? `${group} (selected)` : group,
     sentBy: sender._id,
     senderName: sender.name,
@@ -249,43 +186,8 @@ exports.send = async (req, res) => {
 
   res.status(202).json({ campaign: { id: campaign._id, total: list.length, status: 'queued' } });
 
-  // setImmediate(() => runCampaign(campaign._id, list, smtp, sender.email).catch(() => { }));
-  setImmediate(() => runCampaign(campaign._id, list, smtp, "yash.soni@leadsoc.com").catch(() => { }));
+  setImmediate(() => runCampaign(campaign._id, list, smtp, sender.email).catch(() => {}));
 };
-
-function personalizeHtml(template, r) {
-  const values = getPersonalizationValues(r);
-
-  return String(template || '').replace(
-    /\{\{\s*(name|firstName|email|employeeCode|role|bu)\s*\}\}/gi,
-    (_, key) => esc(values[key] ?? '')
-  );
-}
-
-function toHtmlEmail(template, r) {
-  let html = personalizeHtml(template, r);
-
-  html = html
-    .replace(/^```html\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-
-  if (!/<html[\s>]/i.test(html)) {
-    html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body>
-${html}
-</body>
-</html>`;
-  }
-
-  return html;
-}
 
 async function runCampaign(id, list, smtp, replyTo) {
   const campaign = await EmailCampaign.findById(id);
@@ -299,27 +201,14 @@ async function runCampaign(id, list, smtp, replyTo) {
   for (let i = 0; i < list.length; i++) {
     const r = list[i];
     try {
-      const personalizedSubject = personalize(campaign.subject, r);
-
-      let mailHtml;
-      let mailText;
-
-      if (campaign.isHtml === true) {
-        mailHtml = toHtmlEmail(campaign.body, r);
-        mailText = personalizedSubject;
-      } else {
-        mailText = `${personalize(campaign.body, r)}\n\n— Sent by ${campaign.senderName} via LeadSoC TEDP`;
-        mailHtml = toHtml(campaign.body, r, campaign.senderName);
-      }
-
       await mailer.send({
         fromName: campaign.senderName,
         replyTo,
         to: r.email,
         toName: r.name,
-        subject: personalizedSubject,
-        text: mailText,
-        html: mailHtml,
+        subject: personalize(campaign.subject, r, false),
+        text: `${personalize(campaign.body, r, false)}\n\n— Sent by ${campaign.senderName} via LeadSoC TEDP`,
+        html: toHtml(campaign.body, r, campaign.senderName),
       });
       sent += 1;
       await EmailCampaign.updateOne({ _id: id }, { $set: { [`recipients.${i}.status`]: 'sent' }, $inc: { sent: 1 } });
@@ -357,22 +246,6 @@ exports.campaign = async (req, res) => {
   res.json({ campaign: c });
 };
 
-// exports.preview = async (req, res) => {
-//   const r = {
-//     name: req.body.name || 'Asha Rao',
-//     email: req.body.email || 'asha.rao@example.com',
-//     employeeCode: req.body.employeeCode || 'LS-1001',
-//     roleLabel: req.body.roleLabel || 'Engineer',
-//     buName: req.body.buName || 'BE',
-//   };
-//   const sender = person(req);
-//   res.json({
-//     subject: personalize(String(req.body.subject || ''), r, false),
-//     html: toHtml(String(req.body.body || ''), r, sender.name),
-//   });
-// };
-
-
 exports.preview = async (req, res) => {
   const r = {
     name: req.body.name || 'Asha Rao',
@@ -381,28 +254,15 @@ exports.preview = async (req, res) => {
     roleLabel: req.body.roleLabel || 'Engineer',
     buName: req.body.buName || 'BE',
   };
-
   const sender = person(req);
-
-  const subject = personalize(
-    String(req.body.subject || ''),
-    r
-  );
-
-  const body = String(req.body.body || '');
-  const isHtml = req.body.isHtml === true;
-
   res.json({
-    subject,
-
-    html: isHtml
-      ? toHtmlEmail(body, r)
-      : toHtml(body, r, sender.name),
+    subject: personalize(String(req.body.subject || ''), r, false),
+    html: toHtml(String(req.body.body || ''), r, sender.name),
   });
 };
 
 exports.markInterrupted = async () => {
   try {
     await EmailCampaign.updateMany({ status: { $in: ['queued', 'sending'] } }, { $set: { status: 'interrupted', finishedAt: new Date() } });
-  } catch (e) { }
+  } catch (e) {}
 };
