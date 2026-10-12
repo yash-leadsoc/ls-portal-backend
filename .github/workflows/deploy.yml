@@ -1,0 +1,38 @@
+name: Deploy backend
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check code
+        run: |
+          npm ci --no-audit --no-fund
+          for f in $(find src -name '*.js'); do node --check "$f"; done
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -e
+            mkdir -p ~/app/releases
+            rm -rf ~/app/releases/backend
+            git -C ~/app/backend fetch origin main
+            git -C ~/app/backend reset --hard origin/main
+            cp -a ~/app/backend ~/app/releases/backend
+            bash ~/app/backend/deploy/after_install.sh
