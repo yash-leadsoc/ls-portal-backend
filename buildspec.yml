@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+  build:
+    commands:
+      - npm ci --no-audit --no-fund
+      - for f in $(find src -name '*.js'); do node --check "$f" || exit 1; done
+      - chmod +x deploy/*.sh
+
+artifacts:
+  files:
+    - '**/*'
+  exclude-paths:
+    - 'node_modules/**/*'
+    - '.git/**/*'
+    - '.env'
