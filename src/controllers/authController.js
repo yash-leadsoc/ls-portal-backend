@@ -151,7 +151,11 @@ exports.forgotPassword = async (req, res) => {
         toName: user.name,
         subject: `Your TEDP password reset code: ${otp}`,
         text: `Dear ${user.name},\n\nYour password reset code is ${otp}.\nIt expires in ${OTP_TTL_MIN} minutes.\n\nIf you did not ask to reset your password, ignore this email.\n\n— LeadSoC TEDP`,
-        html: `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1f2937;line-height:1.6">Dear ${String(user.name).replace(/[<>&]/g, '')},<br><br>Your password reset code is<div style="font-size:28px;font-weight:700;letter-spacing:6px;color:#102a56;margin:12px 0">${otp}</div>It expires in ${OTP_TTL_MIN} minutes.<br><br><span style="color:#64748b;font-size:12px">If you did not ask to reset your password, ignore this email.</span><br><br>— LeadSoC TEDP</div>`,
+        html: require('../utils/emailTemplate').emailLayout({
+          preheader: `Your password reset code is ${otp}`,
+          bodyHtml: `Dear ${require('../utils/emailTemplate').esc(user.name)},<br><br>Your password reset code is<div style="font-size:30px;font-weight:700;letter-spacing:8px;color:#1b2b5e;margin:14px 0;font-family:Arial,Helvetica,sans-serif">${otp}</div>It expires in ${OTP_TTL_MIN} minutes.<br><br><span style="color:#64748b;font-size:12px">If you did not ask to reset your password, you can ignore this email.</span>`,
+          footerHtml: 'This is an automated message from LeadSoC TEDP.',
+        }),
       });
     } finally {
       mailer.close();

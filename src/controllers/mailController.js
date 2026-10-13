@@ -4,6 +4,7 @@ const EmailCampaign = require('../models/EmailCampaign');
 const MailAccount = require('../models/MailAccount');
 const { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender, setSystemSender, getSystemSenderId } = require('../services/mailer');
 const { encrypt } = require('../utils/mailCrypto');
+const { emailLayout } = require('../utils/emailTemplate');
 const { logAudit } = require('../utils/audit');
 
 const GROUPS = {
@@ -34,9 +35,13 @@ function personalize(template, r, html) {
 
 function toHtml(body, r, senderName) {
   const inner = personalize(body, r, true)
-    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" style="color:#0284a8;">$1</a>')
     .replace(/\r?\n/g, '<br>');
-  return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1f2937;">${inner}<br><br><span style="color:#64748b;font-size:12px;">Sent by ${esc(senderName)} via LeadSoC TEDP</span></body></html>`;
+  return emailLayout({
+    bodyHtml: inner,
+    footerHtml: `Sent by ${esc(senderName)} via LeadSoC TEDP`,
+    preheader: personalize(body, r, false).replace(/\s+/g, ' ').slice(0, 120),
+  });
 }
 
 async function loadRecipients(group) {
