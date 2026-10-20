@@ -18,6 +18,13 @@ const userSchema = new mongoose.Schema(
         ref: 'Domain',
       },
     ],
+    domainAssignedAt: [
+      {
+        _id: false,
+        domain: { type: mongoose.Schema.Types.ObjectId, ref: 'Domain' },
+        at: { type: Date, default: Date.now },
+      },
+    ],
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 
     manager: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

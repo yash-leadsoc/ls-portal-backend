@@ -71,11 +71,14 @@ async function senderFor(userId) {
 function openSender(sender) {
   const t = makeTransport(sender.server, sender.user, sender.pass);
   return {
-    async send({ fromName, replyTo, to, toName, subject, text, html }) {
+    async send({ fromName, replyTo, to, toName, cc, bcc, subject, text, html }) {
       await t.sendMail({
         from: { name: fromName, address: sender.from },
-        replyTo: replyTo && replyTo.toLowerCase() !== sender.from.toLowerCase() ? replyTo : undefined,
+        // replyTo: replyTo && replyTo.toLowerCase() !== sender.from.toLowerCase() ? replyTo : undefined,
+        replyTo: replyTo || undefined,
         to: toName ? { name: toName, address: to } : to,
+        cc: cc && cc.length ? cc : undefined,
+        bcc: bcc && bcc.length ? bcc : undefined,
         subject,
         text,
         html,

@@ -12,6 +12,7 @@ const { startTrashPurgeJob } = require('./utils/trash');
 const sanitize = require('./middleware/sanitize');
 const { monitor, startMonitorJobs, flushMetrics } = require('./middleware/monitor');
 const { startAlertJob } = require('./services/alerts');
+const { startAutomationJob } = require('./services/automation');
 const { logSystem } = require('./utils/systemLog');
 const pptSubmissionRoutes = require('./routes/pptSubmission');
 
@@ -108,6 +109,7 @@ app.use('/api/resume', require('./routes/resume'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/bench', require('./routes/bench'));
 app.use('/api/mail', require('./routes/mail'));
+app.use('/api/automation', require('./routes/automation'));
 app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 
 app.use((err, req, res, next) => {
@@ -147,6 +149,7 @@ connectDB()
     startTrashPurgeJob();
     startMonitorJobs();
     startAlertJob();
+    startAutomationJob();
     const server = app.listen(PORT);
     logSystem('info', 'server', `Server started (Node ${process.version}, pid ${process.pid})`);
 

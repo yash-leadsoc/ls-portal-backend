@@ -60,6 +60,7 @@ function isDeveloperQuestion(message) {
     const text = message.toLowerCase();
 
     const keywords = [
+        'developer',
         'who developed',
         'who develop',
         'who created',

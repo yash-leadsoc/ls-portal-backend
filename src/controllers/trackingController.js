@@ -33,23 +33,30 @@ function paceLabel(bestPct, days) {
   return 'Slow pace';
 }
 
-async function computeEmployeeProgress(employeeId) {
-  const [domains, docs, checklists, writeups] = await Promise.all([
+async function loadProgressContent() {
+  const [domains, docs, checklists, writeups, allExercises] = await Promise.all([
     Domain.find({ active: true }),
     Document.find({ active: true }),
     Checklist.find({ active: true }),
     Writeup.find({ active: true }),
+    Exercise.find({ active: true }),
   ]);
+  return { domains, docs, checklists, writeups, allExercises };
+}
+
+async function computeEmployeeProgress(employeeId, shared) {
+  const content = shared || (await loadProgressContent());
+  const { domains, docs, checklists, writeups } = content;
 
   const checklistIds = checklists.map((c) => c._id);
   const writeupIds = writeups.map((w) => w._id);
 
-  const [responses, answers, reviews, pptSubs, allExercises, exerciseSubs] = await Promise.all([
+  const allExercises = content.allExercises;
+  const [responses, answers, reviews, pptSubs, exerciseSubs] = await Promise.all([
     ChecklistResponse.find({ employee: employeeId, checklist: { $in: checklistIds } }),
     WriteupAnswer.find({ employee: employeeId, writeup: { $in: writeupIds } }),
     MaterialReview.find({ employee: employeeId }),
     PptSubmission.find({ uploadedBy: employeeId }),
-    Exercise.find({ active: true }),
     ExerciseSubmission.find({ employee: employeeId }),
   ]);
 
@@ -539,3 +546,7 @@ exports.cohort = async (req, res) => {
     flagged,
   });
 };
+
+exports.computeEmployeeProgress = computeEmployeeProgress;
+exports.loadProgressContent = loadProgressContent;
+exports.daysEnrolled = daysEnrolled;

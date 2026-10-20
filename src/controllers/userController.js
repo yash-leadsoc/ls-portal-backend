@@ -6,6 +6,7 @@ const { logAudit } = require('../utils/audit');
 const { benchInfo, parseDate } = require('../utils/bench');
 
 const JOB_STATUSES = ['on_training', 'ongoing_interview', 'deployed'];
+const automation = require('../services/automation');
 
 const {
   createNotification,
@@ -33,6 +34,7 @@ exports.createCTO = async (req, res) => {
     await user.setPassword(password);
     await user.save();
     await logAudit(req, { action: 'create', entity: 'management', entityId: user._id, entityLabel: `${user.name} (${designation})` });
+    automation.onUserCreated(user, { password });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {  res.status(500).json({ message: 'Could not create management user' }); }
 };
@@ -58,6 +60,7 @@ exports.createSubAdmin = async (req, res) => {
     await user.setPassword(password);
     await user.save();
     await logAudit(req, { action: 'create', entity: 'subadmin', entityId: user._id, entityLabel: user.name });
+    automation.onUserCreated(user, { password });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create sub admin' });
@@ -112,6 +115,7 @@ exports.createBU = async (req, res) => {
     await user.setPassword(kind === 'unit' ? require('crypto').randomBytes(16).toString('hex') : password);
     await user.save();
     await logAudit(req, { action: 'create', entity: kind === 'head' ? 'bu.head' : 'bu', entityId: user._id, entityLabel: user.name });
+    if (kind !== 'unit') automation.onUserCreated(user, { password });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create BU' });
@@ -169,6 +173,7 @@ exports.createManager = async (req, res) => {
     action: 'create', entity: 'manager',
     entityId: user._id, entityLabel: user.name,
   });
+    automation.onUserCreated(user, { password });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create manager' });
@@ -231,6 +236,8 @@ exports.createEmployee = async (req, res) => {
     action: 'create', entity: 'employee',
     entityId: user._id, entityLabel: user.name,
   });
+    automation.onUserCreated(user, { password });
+    if (user.manager) automation.onTrainerAssigned(user, user.manager, { notifyEngineer: false });
     res.status(201).json({ user: user.toSafeJSON() });
   } catch (err) {
     res.status(500).json({ message: 'Could not create employee' });
@@ -477,9 +484,17 @@ exports.assignDomains = async (req, res) => {
       });
     }
 
+    const before = new Set((employee.assignedDomains || []).map(String));
+    const added = uniqueDomainIds.filter((id) => !before.has(id));
+    const keptAt = new Map((employee.domainAssignedAt || []).map((a) => [String(a.domain), a.at]));
     employee.assignedDomains = uniqueDomainIds;
+    employee.domainAssignedAt = uniqueDomainIds.map((id) => ({
+      domain: id,
+      at: before.has(id) ? keptAt.get(id) || employee.enrolledAt || employee.createdAt || new Date() : new Date(),
+    }));
 
     await employee.save();
+    if (added.length) automation.onDomainsAssigned(employee, added, req.user);
 
     const updatedEmployee = await User.findById(
       employee._id
@@ -662,6 +677,8 @@ exports.bulkCreateEmployees = async (req, res) => {
       });
       await user.setPassword(password);
       await user.save();
+      automation.onUserCreated(user, { password });
+      if (user.manager) automation.onTrainerAssigned(user, user.manager, { notifyEngineer: false });
       r.result = 'created';
       r.generatedPassword = r.password ? '(as entered in file)' : password;
     } catch (e) {
@@ -766,6 +783,7 @@ exports.updateEngineer = async (req, res) => {
     if (me.role !== 'admin' && !sameUnit) return res.status(403).json({ message: 'You can only edit engineers in your unit' });
 
     const { name, email, employeeCode, contactNumber, preferredLocation, skills, businessUnit, managerId } = req.body || {};
+    const prevTrainer = eng.manager ? String(eng.manager) : '';
 
     if (name !== undefined) {
       const v = String(name).trim();
@@ -831,6 +849,7 @@ exports.updateEngineer = async (req, res) => {
 
     await eng.save();
     await logAudit(req, { action: 'update', entity: 'employee', entityId: eng._id, entityLabel: eng.name });
+    if (eng.manager && String(eng.manager) !== prevTrainer) automation.onTrainerAssigned(eng, eng.manager);
 
     const fresh = await User.findById(eng._id)
       .populate({ path: 'businessUnit', select: 'name category', populate: { path: 'category', select: 'name' } })

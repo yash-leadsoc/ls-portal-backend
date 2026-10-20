@@ -12,7 +12,7 @@ function logoUrl() {
   return process.env.EMAIL_LOGO_URL || `${publicUrl()}/logo-full.png?v=1`;
 }
 
-function emailLayout({ bodyHtml, footerHtml = '', preheader = '' }) {
+function emailLayout({ bodyHtml, footerHtml = '', preheader = '', width = 600 }) {
   const site = publicUrl();
   return `<!doctype html>
 <html lang="en">
@@ -27,7 +27,7 @@ function emailLayout({ bodyHtml, footerHtml = '', preheader = '' }) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6fb;">
   <tr>
     <td align="center" style="padding:24px 12px;">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e9f2;">
+      <table role="presentation" width="${width}" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:${width}px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e9f2;">
         <tr>
           <td style="background:#1b2b5e;padding:18px 24px;">
             <img src="${esc(logoUrl())}" width="170" alt="LeadSoC" style="display:block;width:170px;height:auto;border:0;outline:none;text-decoration:none;">

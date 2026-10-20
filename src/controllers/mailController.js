@@ -2,7 +2,9 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const EmailCampaign = require('../models/EmailCampaign');
 const MailAccount = require('../models/MailAccount');
-const { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender, setSystemSender, getSystemSenderId } = require('../services/mailer');
+// const { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender, setSystemSender, getSystemSenderId } = require('../services/mailer');
+const { canReceive, getServer, saveServer, verifyAccount, senderFor, openSender, systemSender: getSystemMailbox, setSystemSender, getSystemSenderId } = require('../services/mailer');
+const isFullAdmin = (u) => u.role === 'admin' && !u.subAdmin;
 const { encrypt } = require('../utils/mailCrypto');
 const { emailLayout } = require('../utils/emailTemplate');
 const { logAudit } = require('../utils/audit');
@@ -47,7 +49,8 @@ function toHtml(body, r, senderName) {
 async function loadRecipients(group) {
   const filter = { active: true, headOnly: { $ne: true }, ...(GROUPS[group] || GROUPS.all) };
   const users = await User.find(filter)
-    .select('name email employeeCode role businessUnit loginDisabled')
+    // .select('name email employeeCode role businessUnit loginDisabled')
+    .select('name email employeeCode role designation businessUnit loginDisabled')
     .populate('businessUnit', 'name')
     .sort({ role: 1, name: 1 })
     .lean();
@@ -57,7 +60,8 @@ async function loadRecipients(group) {
     email: u.email,
     employeeCode: u.employeeCode || '',
     role: u.role,
-    roleLabel: ROLE_LABEL[u.role] || u.role,
+    // roleLabel: ROLE_LABEL[u.role] || u.role,
+    roleLabel: u.role === 'cto' ? u.designation || 'Management' : ROLE_LABEL[u.role] || u.role,
     buName: u.role === 'bu' ? u.name : (u.businessUnit && u.businessUnit.name) || '',
     canReceive: canReceive(u.email) && !u.loginDisabled,
   }));
@@ -69,7 +73,12 @@ exports.config = async (req, res) => {
   const me = person(req);
   const [server, acc] = await Promise.all([getServer(), MailAccount.findOne({ user: me._id }).lean()]);
   const envFallback = !acc && server && server.source === 'env' && process.env.SMTP_USER && process.env.SMTP_PASS;
-  const sendsAs = acc ? acc.smtpUser : envFallback ? process.env.SMTP_FROM || process.env.SMTP_USER : null;
+  // const sendsAs = acc ? acc.smtpUser : envFallback ? process.env.SMTP_FROM || process.env.SMTP_USER : null;
+  let sendsAs = acc ? acc.smtpUser : envFallback ? process.env.SMTP_FROM || process.env.SMTP_USER : null;
+  if (!sendsAs && !isFullAdmin(me)) {
+    const sys = await getSystemMailbox();
+    if (!sys.error) sendsAs = sys.from;
+  }
   const systemId = await getSystemSenderId();
   let systemSender = null;
   if (systemId) {
@@ -104,8 +113,11 @@ exports.saveServer = async (req, res) => {
   res.json({ server: value, message: 'Mail server saved' });
 };
 
+// exports.saveAccount = async (req, res) => {
+//   const me = person(req);
 exports.saveAccount = async (req, res) => {
   const me = person(req);
+  if (!isFullAdmin(me)) return res.status(403).json({ message: 'Only the main admin can change mail settings' });
   const smtpUser = String(req.body.smtpUser || me.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(smtpUser)) return res.status(400).json({ message: 'Enter a valid email address' });
@@ -136,8 +148,11 @@ exports.useForSystem = async (req, res) => {
   res.json({ message: `Password-reset codes will be sent from ${acc.smtpUser}` });
 };
 
+// exports.removeAccount = async (req, res) => {
+//   const me = person(req);
 exports.removeAccount = async (req, res) => {
   const me = person(req);
+  if (!isFullAdmin(me)) return res.status(403).json({ message: 'Only the main admin can change mail settings' });
   await MailAccount.deleteOne({ user: me._id });
   await logAudit(req, { action: 'delete', entity: 'mail.account', entityLabel: me.email });
   res.json({ message: 'Mailbox removed' });
@@ -157,7 +172,10 @@ exports.send = async (req, res) => {
   if (!subject) return res.status(400).json({ message: 'Subject is required' });
   if (!body) return res.status(400).json({ message: 'Message is required' });
   const sender = person(req);
-  const smtp = await senderFor(sender._id);
+  // const smtp = await senderFor(sender._id);
+  // if (smtp.error) return res.status(400).json({ message: smtp.error });
+  let smtp = await senderFor(sender._id);
+  if (smtp.error && !isFullAdmin(sender)) smtp = await getSystemMailbox();
   if (smtp.error) return res.status(400).json({ message: smtp.error });
 
   let list = await loadRecipients(group);
@@ -191,7 +209,9 @@ exports.send = async (req, res) => {
 
   res.status(202).json({ campaign: { id: campaign._id, total: list.length, status: 'queued' } });
 
-  setImmediate(() => runCampaign(campaign._id, list, smtp, sender.email).catch(() => {}));
+  // setImmediate(() => runCampaign(campaign._id, list, smtp, sender.email).catch(() => {}));
+  const replyTo = String(req.user.email || '').trim().toLowerCase();
+  setImmediate(() => runCampaign(campaign._id, list, smtp, replyTo).catch(() => { }));
 };
 
 async function runCampaign(id, list, smtp, replyTo) {
@@ -269,5 +289,5 @@ exports.preview = async (req, res) => {
 exports.markInterrupted = async () => {
   try {
     await EmailCampaign.updateMany({ status: { $in: ['queued', 'sending'] } }, { $set: { status: 'interrupted', finishedAt: new Date() } });
-  } catch (e) {}
+  } catch (e) { }
 };

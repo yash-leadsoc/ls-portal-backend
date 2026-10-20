@@ -275,6 +275,7 @@ exports.importRows = async (req, res) => {
         });
         await u.setPassword(password);
         await u.save();
+        require('../services/automation').onUserCreated(u, { password });
         user = u;
         r.login = r.empId;
         r.password = password;

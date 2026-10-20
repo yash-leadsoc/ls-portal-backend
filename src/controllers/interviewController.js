@@ -160,6 +160,7 @@ exports.scheduleMock = async (req, res) => {
       url: '/interviews',
     });
 
+    require('../services/automation').onMockScheduled(mock);
     res.status(201).json({ mock, meetConfigured: meet.configured !== false });
   } catch (e) {
     res.status(500).json({ message: 'Could not schedule mock interview' });
@@ -182,6 +183,7 @@ exports.scoreMock = async (req, res) => {
     meta: { mockId: mock._id, score: mock.score },
     by: req.user._id, byName: req.user.name, businessUnit: mock.businessUnit,
   });
+  require('../services/automation').onMockResult(mock, req.user);
   res.json({ mock });
 };
 
