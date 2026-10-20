@@ -39,6 +39,7 @@ const benchRecordSchema = new mongoose.Schema(
     empId: { type: String, required: true, unique: true, trim: true },
     employee: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     name: { type: String, required: true, trim: true },
+    email: { type: String, default: '', trim: true, lowercase: true },
     buCode: { type: String, default: '', trim: true },
     businessUnit: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     status: { type: String, default: 'Open' },

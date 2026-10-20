@@ -91,6 +91,7 @@ function shapeRecord(r, { commentLimit = 12 } = {}) {
     empId: r.empId,
     employee: r.employee,
     name: r.name,
+    email: r.email || '',
     buCode: r.buCode,
     businessUnit: r.businessUnit,
     businessUnitName: r.businessUnitName || '',
@@ -118,7 +119,7 @@ function shapeRecord(r, { commentLimit = 12 } = {}) {
 }
 
 function generatePassword() {
-  return  '123456';
+  return '123456';
 }
 
 async function runPool(items, size, worker) {
@@ -206,10 +207,22 @@ exports.importRows = async (req, res) => {
     const user = r.empId ? userByCode.get(r.empId.toLowerCase()) : null;
     if (user && user.role !== 'employee') errors.push(`EMP ID belongs to a ${user.role} account`);
 
-    let email = '';
+    // let email = '';
+    // if (!user && createAccounts && r.empId) {
+    //   email = r.email && EMAIL_RX.test(r.email) ? r.email : `${r.empId.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${emailDomain}`;
+    //   if (takenEmails.has(email)) errors.push(`Email ${email} is already used by another account`);
+    // }
+
+    let email = r.email || '';
+
     if (!user && createAccounts && r.empId) {
-      email = r.email && EMAIL_RX.test(r.email) ? r.email : `${r.empId.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${emailDomain}`;
-      if (takenEmails.has(email)) errors.push(`Email ${email} is already used by another account`);
+      email = r.email && EMAIL_RX.test(r.email)
+        ? r.email
+        : `${r.empId.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${emailDomain}`;
+
+      if (takenEmails.has(email)) {
+        errors.push(`Email ${email} is already used by another account`);
+      }
     }
 
     return {
@@ -290,6 +303,7 @@ exports.importRows = async (req, res) => {
       Object.assign(rec, {
         employee: user ? user._id : rec.employee || null,
         name: r.name,
+       email: r.email || rec.email || '',
         buCode: r.buCode,
         businessUnit: r.bu._id,
         status: r.status,
@@ -373,6 +387,7 @@ exports.getOne = async (req, res) => {
 
 const EDITABLE = {
   name: (v) => text(v, 120),
+  email: (v) => text(v, 160).toLowerCase(),
   buCode: (v) => text(v, 40),
   status: canonicalStatus,
   clientName: (v) => text(v, 160),
@@ -503,7 +518,14 @@ exports.report = async (req, res) => {
   const active = all.filter((r) => !OFF_BENCH.has(r.status));
 
   const buCodes = [...new Set(all.map((r) => r.buCode || 'Unassigned'))].sort();
-  const statusRows = ['PO', 'YTO', 'Resigned', 'Open - Under Training', 'Pending Exit'];
+  const statusRows = [
+  'PO',
+  'YTO',
+  'Resigned',
+  'Open - Under Training',
+  'Pending Exit',
+  'Onboarded',
+];
   const matrix = {};
   const add = (row, bu, n = 1) => {
     matrix[row] = matrix[row] || {};
@@ -561,7 +583,7 @@ exports.report = async (req, res) => {
   const changes = [];
   all.forEach((r) =>
     (r.history || [])
-      .filter((h) => inRange(h.at) && h.from !== '' )
+      .filter((h) => inRange(h.at) && h.from !== '')
       .forEach((h) => changes.push({ empId: r.empId, name: r.name, buCode: r.buCode, field: h.field, from: h.from, to: h.to, at: h.at, byName: h.byName }))
   );
   changes.sort((a, b) => new Date(b.at) - new Date(a.at));
@@ -631,6 +653,7 @@ exports.report = async (req, res) => {
       commentsInPeriod: periodComments.length,
       updatedInPeriod: updatedIds.size,
       notUpdatedInPeriod: notUpdated.length,
+      deployed: all.filter((r) => r.status === 'Onboarded').length,
     },
     buCodes,
     matrix: matrixRows,
