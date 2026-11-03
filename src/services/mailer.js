@@ -92,23 +92,67 @@ function openSender(sender) {
 
 const SYSTEM_KEY = 'mail_system_user';
 
+// async function systemSender() {
+//   const User = require('../models/User');
+//   const doc = await Setting.findOne({ key: SYSTEM_KEY }).lean();
+//   if (doc && doc.value) {
+//     const s = await senderFor(doc.value);
+//     if (!s.error) return s;
+//   }
+//   const admins = await User.find({ role: 'admin', subAdmin: { $ne: true }, active: true }).select('_id').lean();
+//   for (const a of admins) {
+//     const s = await senderFor(a._id);
+//     if (!s.error && s.own) return s;
+//   }
+//   const server = await getServer();
+//   if (server && server.source === 'env' && process.env.SMTP_USER && process.env.SMTP_PASS) {
+//     return { server, user: process.env.SMTP_USER, pass: process.env.SMTP_PASS, from: process.env.SMTP_FROM || process.env.SMTP_USER };
+//   }
+//   return { error: 'No mailbox is set up for system emails' };
+// }
+
+
 async function systemSender() {
   const User = require('../models/User');
+
+  // 1. Check selected system mailbox
   const doc = await Setting.findOne({ key: SYSTEM_KEY }).lean();
-  if (doc && doc.value) {
-    const s = await senderFor(doc.value);
-    if (!s.error) return s;
+
+  if (doc?.value) {
+    const selected = await senderFor(doc.value);
+
+    if (!selected.error) return selected;
   }
-  const admins = await User.find({ role: 'admin', subAdmin: { $ne: true }, active: true }).select('_id').lean();
-  for (const a of admins) {
-    const s = await senderFor(a._id);
-    if (!s.error && s.own) return s;
+
+  // 2. Find any connected admin mailbox
+  const admins = await User.find({
+    role: 'admin',
+    subAdmin: { $ne: true }
+  }).select('_id').lean();
+
+  for (const admin of admins) {
+    const account = await senderFor(admin._id);
+
+    if (!account.error && account.own) {
+      return account;
+    }
   }
+
+  // 3. Environment SMTP fallback
   const server = await getServer();
-  if (server && server.source === 'env' && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    return { server, user: process.env.SMTP_USER, pass: process.env.SMTP_PASS, from: process.env.SMTP_FROM || process.env.SMTP_USER };
+
+  if (server && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    return {
+      server,
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+      from: process.env.SMTP_FROM || process.env.SMTP_USER
+    };
   }
-  return { error: 'No mailbox is set up for system emails' };
+
+  return {
+    error: 'No connected admin mailbox found. Please connect a mailbox in Mail Settings.'
+  };
 }
 
 async function setSystemSender(userId) {

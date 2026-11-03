@@ -16,6 +16,12 @@ const { startAutomationJob } = require('./services/automation');
 const { logSystem } = require('./utils/systemLog');
 const pptSubmissionRoutes = require('./routes/pptSubmission');
 
+const examPublicRoutes = require('./routes/examPublic');
+const examAdminRoutes = require('./routes/examAdmin');
+const examAttemptRoutes = require('./routes/examAttempts');
+const examResultRoutes = require('./routes/examResults');
+const { startExamJobs } = require('./services/exam/examScheduler');
+
 const isProd = process.env.NODE_ENV === 'production';
 
 const app = express();
@@ -110,6 +116,16 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/bench', require('./routes/bench'));
 app.use('/api/mail', require('./routes/mail'));
 app.use('/api/automation', require('./routes/automation'));
+
+
+app.use('/api/exam/public', examPublicRoutes);
+app.use('/api/exam/admin', examAdminRoutes);
+app.use('/api/exam/attempts', examAttemptRoutes);
+app.use('/api/exam/results', examResultRoutes);
+
+
+
+
 app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 
 app.use((err, req, res, next) => {
@@ -129,6 +145,9 @@ app.use((err, req, res, next) => {
   const message = status >= 500 && isProd ? 'Server error' : err.message || 'Server error';
   res.status(status).json({ message });
 });
+
+
+
 
 process.on('unhandledRejection', (reason) => {
   logSystem('error', 'process', `Unhandled promise rejection: ${reason && reason.message ? reason.message : reason}`, {
@@ -150,6 +169,7 @@ connectDB()
     startMonitorJobs();
     startAlertJob();
     startAutomationJob();
+    startExamJobs();
     const server = app.listen(PORT);
     logSystem('info', 'server', `Server started (Node ${process.version}, pid ${process.pid})`);
 
