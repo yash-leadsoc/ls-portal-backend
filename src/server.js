@@ -15,7 +15,7 @@ const { startAlertJob } = require('./services/alerts');
 const { startAutomationJob } = require('./services/automation');
 const { logSystem } = require('./utils/systemLog');
 const pptSubmissionRoutes = require('./routes/pptSubmission');
-
+const examAdminAuthRoutes = require('./routes/examAdminAuth');
 const examPublicRoutes = require('./routes/examPublic');
 const examAdminRoutes = require('./routes/examAdmin');
 const examAttemptRoutes = require('./routes/examAttempts');
@@ -117,7 +117,7 @@ app.use('/api/bench', require('./routes/bench'));
 app.use('/api/mail', require('./routes/mail'));
 app.use('/api/automation', require('./routes/automation'));
 
-
+app.use('/api/exam/admin-auth', loginLimiter, examAdminAuthRoutes);
 app.use('/api/exam/public', examPublicRoutes);
 app.use('/api/exam/admin', examAdminRoutes);
 app.use('/api/exam/attempts', examAttemptRoutes);
