@@ -3,6 +3,7 @@ const path = require('path');
 const Q = require('../../models/exam/ExamQuestion');
 const ExamSet = require('../../models/exam/ExamSet');
 const { pick } = require('./helpers');
+const { invalidateSet } = require('../../services/exam/examCache');
 
 const TYPES = ['MCQ', 'MULTI_SELECT', 'TRUE_FALSE', 'SHORT_ANSWER', 'LONG_ANSWER'];
 const FIELDS = [
@@ -46,6 +47,7 @@ function prepare(input, existing = null) {
 }
 
 async function recalcSet(setId) {
+  invalidateSet(setId); // candidates' cached paper/option metadata must not outlive an edit
   const agg = await Q.aggregate([{ $match: { set: new (require('mongoose').Types.ObjectId)(String(setId)) } }, { $group: { _id: null, t: { $sum: '$marks' } } }]);
   const ids = await Q.find({ set: setId }).sort({ order: 1, createdAt: 1 }).select('_id');
   await ExamSet.findByIdAndUpdate(setId, { totalMarks: agg[0]?.t || 0, questions: ids.map((i) => i._id) });

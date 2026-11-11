@@ -6,7 +6,8 @@ const candidate = require('../controllers/exam/candidateController');
 // Generous limit: exam centres often share one public IP.
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: Number(process.env.EXAM_REGISTER_RATE_LIMIT || 150),
+  // Exam centres/offices share ONE public IP; 200 candidates must be able to register from it.
+  limit: Number(process.env.EXAM_REGISTER_RATE_LIMIT || 600),
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { message: 'Too many registration attempts. Please try again in a few minutes.' },

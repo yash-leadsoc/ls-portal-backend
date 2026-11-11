@@ -2,6 +2,8 @@
 // keystrokes (flushed right before auto-submit) are not lost.
 const SAVE_GRACE_MS = 5000;
 
+exports.SAVE_GRACE_MS = SAVE_GRACE_MS;
+
 exports.createExpiry = (startedAt, durationMinutes) =>
   new Date(new Date(startedAt).getTime() + durationMinutes * 60000);
 

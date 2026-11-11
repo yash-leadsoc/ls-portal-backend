@@ -29,6 +29,19 @@ const schema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  // 'admin' can do everything incl. resolving/escalating proctoring cases;
+  // 'reviewer' can view proctoring data and mark events reviewed. Existing
+  // records without the field behave as 'admin' (no behaviour change).
+  role: {
+    type: String,
+    enum: ['admin', 'reviewer'],
+    default: 'admin',
+  },
+  // Bumped on logout / forced sign-out; tokens carrying an older `ver` are rejected.
+  tokenVersion: {
+    type: Number,
+    default: 0,
+  },
   lastLoginAt: Date,
 }, { timestamps: true });
 

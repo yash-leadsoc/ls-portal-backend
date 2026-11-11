@@ -115,6 +115,9 @@ function monitor(req, res, next) {
 
       const isMutation = !['GET', 'HEAD'].includes(req.method);
       if (!isMutation && status < 400) return;
+      // Autosave / proctoring ingestion: metrics above still count them; a per-request
+      // Mongo insert would roughly double write load on the hot path. Failures are still logged.
+      if (res.locals.skipRequestLog && status < 400) return;
 
       const u = req.actor || req.user || {};
       const err = res.locals.error;

@@ -1,5 +1,9 @@
 const ExamAdmin = require('../../models/exam/ExamAdmin');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+// Compared against when the account does not exist so response time does not reveal valid IDs.
+const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
 exports.login = async (req, res) => {
   try {
@@ -23,17 +27,12 @@ exports.login = async (req, res) => {
       ],
     });
 
-    if (!admin || !admin.active) {
+    // One message for every failure mode (unknown id, inactive, wrong password).
+    const valid = admin ? await admin.verifyPassword(password) : (await bcrypt.compare(password, DUMMY_HASH), false);
+
+    if (!admin || !admin.active || !valid) {
       return res.status(401).json({
         message: 'Invalid credentials or inactive account.',
-      });
-    }
-
-    const valid = await admin.verifyPassword(password);
-
-    if (!valid) {
-      return res.status(401).json({
-        message: 'Invalid credentials.',
       });
     }
 
@@ -45,13 +44,13 @@ exports.login = async (req, res) => {
       {
         sub: admin._id.toString(),
         type: 'exam_admin',
+        ver: admin.tokenVersion || 0,
       },
       process.env.EXAM_ADMIN_JWT_SECRET,
-      { expiresIn: '8h' }
+      { expiresIn: process.env.EXAM_ADMIN_JWT_EXPIRES_IN || '8h', algorithm: 'HS256' }
     );
 
-    admin.lastLoginAt = new Date();
-    await admin.save();
+    await ExamAdmin.updateOne({ _id: admin._id }, { $set: { lastLoginAt: new Date() } });
 
     res.json({
       token,
@@ -60,10 +59,18 @@ exports.login = async (req, res) => {
         adminId: admin.adminId,
         name: admin.name,
         email: admin.email,
+        role: admin.role || 'admin',
       },
     });
   } catch (error) {
-    console.error('Exam admin login:', error.message);
+    process.stderr.write(`Exam admin login failed: ${error.message}\n`);
     res.status(500).json({ message: 'Exam admin login failed.' });
   }
+};
+
+// Secure logout: bumping tokenVersion invalidates every token previously issued to
+// this admin (the JWT alone could otherwise be replayed until it expires).
+exports.logout = async (req, res) => {
+  await ExamAdmin.updateOne({ _id: req.examAdmin._id }, { $inc: { tokenVersion: 1 } });
+  res.json({ message: 'Signed out.' });
 };

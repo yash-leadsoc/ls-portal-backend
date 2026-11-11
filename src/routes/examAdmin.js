@@ -7,10 +7,12 @@ const q = require('../controllers/exam/questionController');
 const c = require('../controllers/exam/candidateController');
 const a = require('../controllers/exam/analyticsController');
 const x = require('../controllers/exam/exportController');
+const proctoring = require('./examProctoring');
 
 router.use(requireExamAdmin);
 
 router.get('/dashboard', a.dashboard);
+router.use('/proctoring', proctoring.admin);
 
 router.get('/exams', e.list);
 router.post('/exams', e.create);

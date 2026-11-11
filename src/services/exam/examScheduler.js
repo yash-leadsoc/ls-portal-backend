@@ -1,5 +1,5 @@
 const Exam = require('../../models/exam/Exam');
-const { sweepExpiredAttempts } = require('./examSubmit');
+const { sweepExpiredAttempts, repairUnscored } = require('./examSubmit');
 const { retryPending } = require('./examAiEvaluator');
 
 async function syncExamStatuses() {
@@ -19,6 +19,7 @@ function startExamJobs() {
     try {
       await syncExamStatuses();
       await sweepExpiredAttempts();
+      await repairUnscored();
       await retryPending();
     } catch (e) {
       console.error('Exam job failed:', e.message);

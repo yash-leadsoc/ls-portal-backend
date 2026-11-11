@@ -3,6 +3,7 @@ const Exam = require('../../models/exam/Exam');
 const Attempt = require('../../models/exam/ExamAttempt');
 const Result = require('../../models/exam/ExamResult');
 const escapeRegex = require('../../utils/escapeRegex');
+const { invalidateAttemptAuth } = require('../../middleware/examAuth');
 const { newCandidateId, newAttemptId, newAttemptToken, hashToken, assignSet, availableFilter } = require('./helpers');
 
 const attemptMeta = (req) => ({ ipAddress: req.ip, userAgent: String(req.headers['user-agent'] || '').slice(0, 300) });
@@ -28,6 +29,7 @@ exports.register = async (req, res) => {
     if (open && open.status === 'Registered' && candidate.phone === phone) {
       const attemptToken = newAttemptToken();
       await Attempt.updateOne({ _id: open._id }, { $set: { attemptTokenHash: hashToken(attemptToken), ...attemptMeta(req) } });
+      invalidateAttemptAuth(open.attemptId); // old token must stop working immediately
       return res.status(200).json({
         candidateId: candidate.candidateId,
         attemptId: open.attemptId,

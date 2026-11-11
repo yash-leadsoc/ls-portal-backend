@@ -1,12 +1,18 @@
+const mongoose = require('mongoose');
 const Attempt = require('../../models/exam/ExamAttempt');
 const Exam = require('../../models/exam/Exam');
 const Candidate = require('../../models/exam/ExamCandidate');
-const Question = require('../../models/exam/ExamQuestion');
-const { createExpiry, remainingSeconds, assertActive, isExpired } = require('../../services/exam/examTimer');
+const ProctoringSession = require('../../models/exam/ExamProctoringSession');
+const { createExpiry, remainingSeconds, isExpired, SAVE_GRACE_MS } = require('../../services/exam/examTimer');
 const { finalizeAttempt, FINAL } = require('../../services/exam/examSubmit');
-const { publicQuestion, seededShuffle } = require('./helpers');
+const { seededShuffle } = require('./helpers');
+const { getExam, getSet } = require('../../services/exam/examCache');
+const { validAnswer, parseSeq } = require('../../services/exam/answerValidation');
+const { effectiveConfig } = require('../../services/exam/proctoringPolicy');
+const { invalidateAttemptAuth } = require('../../middleware/examAuth');
 
-const MAX_TEXT = 10000;
+const OID = /^[a-f0-9]{24}$/i;
+
 const proctoring = (exam, attempt) => ({
   enabled: exam.proctoringEnabled !== false,
   maxWarnings: exam.maxWarnings ?? 3,
@@ -18,17 +24,48 @@ const finalState = (a) => ({
   reason: a.autoSubmitReason || null,
 });
 
+/**
+ * Server-side enforcement of the AI-proctoring pre-conditions (consent + camera
+ * check, or an approved accommodation). Returns null when the candidate may
+ * start, otherwise a description of what is missing.
+ */
+async function proctoringGate(attempt, exam) {
+  const cfg = effectiveConfig(exam.aiProctoring);
+  if (!cfg.enabled) return null;
+  const s = await ProctoringSession.findOne({ attempt: attempt._id }).select('consent camera accommodation').lean();
+  const accommodated = s?.accommodation?.status === 'Approved';
+  const consent = !!(s?.consent?.given && s.consent.version === cfg.consentVersion);
+  const camera = !cfg.cameraRequired || accommodated || (s?.camera?.state === 'ok' && !!s?.camera?.precheckPassedAt);
+  if (consent && camera) return null;
+  return { consent, camera, accommodation: s?.accommodation?.status || 'None' };
+}
+
 exports.instructions = async (req, res) => {
   const a = req.examAttempt;
   const [exam, candidate] = await Promise.all([
-    Exam.findById(a.exam).select('name durationMinutes maximumMarks passingMarks instructions proctoringEnabled maxWarnings negativeMarking'),
-    Candidate.findById(a.candidate).select('name candidateId'),
+    Exam.findById(a.exam).select('name durationMinutes maximumMarks passingMarks instructions proctoringEnabled maxWarnings negativeMarking aiProctoring').lean(),
+    Candidate.findById(a.candidate).select('name candidateId').lean(),
   ]);
   if (!exam) return res.status(404).json({ message: 'Examination no longer exists' });
+
+  const cfg = effectiveConfig(exam.aiProctoring);
+  let aiSession = null;
+  if (cfg.enabled) {
+    const s = await ProctoringSession.findOne({ attempt: a._id }).select('consent camera accommodation').lean();
+    aiSession = {
+      consentGiven: !!(s?.consent?.given && s.consent.version === cfg.consentVersion),
+      cameraState: s?.camera?.state || 'unknown',
+      precheckPassed: !!s?.camera?.precheckPassedAt,
+      accommodation: s?.accommodation?.status || 'None',
+      accommodationDecisionNote: s?.accommodation?.status === 'Denied' ? s.accommodation.decisionNote || null : null,
+    };
+  }
+  const { aiProctoring, ...examOut } = exam;
   res.json({
-    exam,
+    exam: examOut,
     candidate,
     proctoring: proctoring(exam, a),
+    aiProctoring: cfg.enabled ? { config: cfg, session: aiSession } : { config: { enabled: false } },
     status: a.status,
     expiresAt: a.expiresAt,
     remainingSeconds: a.expiresAt ? remainingSeconds(a.expiresAt) : null,
@@ -48,7 +85,7 @@ exports.start = async (req, res) => {
   }
   if (a.status !== 'Registered') return res.status(409).json({ message: 'This attempt has already been completed', status: a.status });
 
-  const exam = await Exam.findById(a.exam);
+  const exam = await Exam.findById(a.exam).lean(); // authoritative read, never the cache
   if (!exam) return res.status(404).json({ message: 'Examination no longer exists' });
   if (exam.status !== 'Live') return res.status(400).json({ message: 'This examination is not currently live' });
   const now = new Date();
@@ -56,13 +93,23 @@ exports.start = async (req, res) => {
     return res.status(400).json({ message: 'Exam is outside its scheduled window' });
   }
 
+  const missing = await proctoringGate(a, exam);
+  if (missing) {
+    return res.status(403).json({
+      code: 'PROCTORING_REQUIREMENTS',
+      message: 'Complete the consent and camera check (or get an accommodation approved) before starting.',
+      requirements: missing,
+    });
+  }
+
   const expiresAt = createExpiry(now, exam.durationMinutes);
   const started = await Attempt.findOneAndUpdate(
     { _id: a._id, status: 'Registered' },
     { $set: { status: 'In Progress', startedAt: now, expiresAt, lastHeartbeat: now } },
-    { new: true }
-  );
+    { new: true, projection: 'startedAt expiresAt' }
+  ).lean();
   if (!started) return res.status(409).json({ message: 'Attempt already started' });
+  invalidateAttemptAuth(a.attemptId);
   res.json({ startedAt: started.startedAt, expiresAt: started.expiresAt, remainingSeconds: remainingSeconds(started.expiresAt) });
 };
 
@@ -75,13 +122,21 @@ exports.paper = async (req, res) => {
     return res.status(410).json({ message: 'Time expired', ...finalState(r) });
   }
 
-  const exam = await Exam.findById(a.exam);
-  let qs = await Question.find({ set: a.examSet }).sort({ order: 1, createdAt: 1 });
+  // The question set + exam settings are shared by every candidate of the exam and
+  // are served from a short single-flight cache; only this candidate's answers are
+  // read per request. The answer key is never part of the cached paper.
+  const [exam, set, mine] = await Promise.all([
+    getExam(a.exam),
+    getSet(a.examSet),
+    Attempt.findById(a._id).select('responses').lean(),
+  ]);
+  if (!exam) return res.status(404).json({ message: 'Examination no longer exists' });
+
+  let qs = set.paper;
   if (exam.randomizeQuestions) qs = seededShuffle(qs, `${a.attemptId}:q`);
-  const questions = qs.map((q) => {
-    const p = publicQuestion(q);
-    if (exam.randomizeOptions && ['MCQ', 'MULTI_SELECT'].includes(q.type)) {
-      p.options = seededShuffle(q.options || [], `${a.attemptId}:${q._id}`);
+  const questions = qs.map((p) => {
+    if (exam.randomizeOptions && ['MCQ', 'MULTI_SELECT'].includes(p.type)) {
+      return { ...p, options: seededShuffle(p.options || [], `${a.attemptId}:${p.id}`) };
     }
     return p;
   });
@@ -90,51 +145,74 @@ exports.paper = async (req, res) => {
   res.json({
     exam: { name: exam.name, maximumMarks: exam.maximumMarks, durationMinutes: exam.durationMinutes },
     questions,
-    responses: a.responses.map((r) => ({ question: r.question, answer: r.answer, markedForReview: r.markedForReview })),
+    responses: (mine?.responses || []).map((r) => ({ question: r.question, answer: r.answer, markedForReview: r.markedForReview, seq: r.seq || 0 })),
     expiresAt: a.expiresAt,
     remainingSeconds: remainingSeconds(a.expiresAt),
     proctoring: proctoring(exam, a),
+    aiProctoring: effectiveConfig(exam.aiProctoring),
   });
 };
 
-function validAnswer(q, answer) {
-  if (answer === null || answer === undefined || answer === '') return true; // clearing
-  if (q.type === 'MCQ') return typeof answer === 'string' && q.options.some((o) => o.value === answer);
-  if (q.type === 'TRUE_FALSE') return answer === 'true' || answer === 'false';
-  if (q.type === 'MULTI_SELECT') {
-    return Array.isArray(answer) && answer.length <= 26 && answer.every((v) => q.options.some((o) => o.value === v));
-  }
-  return typeof answer === 'string' && answer.length <= (q.type === 'SHORT_ANSWER' ? 1000 : MAX_TEXT);
-}
-
+/**
+ * Autosave. Designed for the hot path: in steady state this is ONE database
+ * operation (the auth lookup and question metadata come from short caches).
+ *
+ * Integrity rules, all enforced inside the atomic UPDATE filter so they hold
+ * even when the cached view is stale or requests race:
+ *  - the attempt must still be 'In Progress' and inside expiry + grace;
+ *  - a save only lands if its seq is newer than the stored one (stale/duplicate
+ *    requests are acknowledged but do not overwrite newer answers);
+ *  - the answer is validated against the question's type/options server-side.
+ */
 exports.save = async (req, res) => {
   const a = req.examAttempt;
-  try {
-    assertActive(a);
-  } catch (e) {
-    if (a.status === 'In Progress') await finalizeAttempt(a, { auto: true, reason: 'TIME_EXPIRED' }).catch(() => {});
-    return res.status(409).json({ message: e.message, status: a.status });
-  }
-
   const { questionId, answer, markedForReview } = req.body || {};
-  const q = await Question.findOne({ _id: questionId, set: a.examSet });
-  if (!q) return res.status(404).json({ message: 'Question not found' });
-  if (!validAnswer(q, answer)) return res.status(400).json({ message: 'Invalid answer for this question' });
+
+  if (typeof questionId !== 'string' || !OID.test(questionId)) return res.status(400).json({ message: 'Invalid question' });
+  if (markedForReview !== undefined && typeof markedForReview !== 'boolean') return res.status(400).json({ message: 'Invalid review flag' });
+
+  const set = await getSet(a.examSet);
+  const meta = set.meta.get(questionId);
+  if (!meta) return res.status(404).json({ message: 'Question not found' });
+  if (!validAnswer(meta, answer)) return res.status(400).json({ message: 'Invalid answer for this question' });
 
   const now = new Date();
+  const seq = parseSeq(req.body.seq) ?? now.getTime(); // legacy clients: server time
   const value = answer === undefined ? null : answer;
-  // Atomic updates: parallel saves never collide on the document version.
-  const upd = await Attempt.updateOne(
-    { _id: a._id, 'responses.question': q._id },
-    { $set: { 'responses.$.answer': value, 'responses.$.markedForReview': !!markedForReview, 'responses.$.savedAt': now, lastHeartbeat: now } }
-  );
-  if (!upd.matchedCount) {
-    await Attempt.updateOne(
-      { _id: a._id, 'responses.question': { $ne: q._id } },
-      { $push: { responses: { question: q._id, answer: value, markedForReview: !!markedForReview, savedAt: now } }, $set: { lastHeartbeat: now } }
+  const review = !!markedForReview;
+  const qOid = new mongoose.Types.ObjectId(questionId);
+  const live = { _id: a._id, status: 'In Progress', expiresAt: { $gt: new Date(now.getTime() - SAVE_GRACE_MS) } };
+
+  const overwrite = () =>
+    Attempt.updateOne(
+      { ...live, responses: { $elemMatch: { question: qOid, $or: [{ seq: { $lt: seq } }, { seq: null }] } } },
+      { $set: { 'responses.$.answer': value, 'responses.$.markedForReview': review, 'responses.$.savedAt': now, 'responses.$.seq': seq, lastHeartbeat: now } }
     );
+
+  // 1) overwrite an existing response if our seq is newer (or it predates seq)
+  if ((await overwrite()).matchedCount) return res.json({ saved: true, savedAt: now, seq });
+
+  // 2) first answer for this question
+  const ins = await Attempt.updateOne(
+    { ...live, 'responses.question': { $ne: qOid } },
+    { $push: { responses: { question: qOid, answer: value, markedForReview: review, savedAt: now, seq } }, $set: { lastHeartbeat: now } }
+  );
+  if (ins.matchedCount) return res.json({ saved: true, savedAt: now, seq });
+
+  // 2b) a concurrent first-save (e.g. second tab) created the entry between steps 1 and 2:
+  //     try the overwrite once more so the newer seq still wins.
+  if ((await overwrite()).matchedCount) return res.json({ saved: true, savedAt: now, seq });
+
+  // 3) nothing matched: either a newer/identical save already exists, or the attempt is no longer writable.
+  const fresh = await Attempt.findById(a._id).select('status expiresAt').lean();
+  if (fresh && fresh.status === 'In Progress' && !isExpired(fresh)) {
+    return res.json({ saved: true, stale: true, savedAt: now, seq }); // acknowledged, NOT applied (newer data kept)
   }
-  res.json({ saved: true, savedAt: now });
+  if (fresh && fresh.status === 'In Progress') {
+    const r = await finalizeAttempt(a, { auto: true, reason: 'TIME_EXPIRED' }).catch(() => null);
+    return res.status(409).json({ message: 'Exam time has expired', status: r?.status || 'Auto Submitted' });
+  }
+  return res.status(409).json({ message: 'Attempt is not active', status: fresh?.status || a.status });
 };
 
 exports.status = async (req, res) => {
@@ -146,9 +224,12 @@ exports.status = async (req, res) => {
 // The candidate left the exam window (minimised, switched tab or application).
 // The server is authoritative: warnings 1..maxWarnings are just recorded; the
 // next violation auto-submits the examination.
+//
+// NOTE: this is the PRE-EXISTING browser-focus policy and is unchanged. It is
+// independent of AI proctoring: events from the AI pipeline never feed it.
 exports.violation = async (req, res) => {
   const a = req.examAttempt;
-  const exam = await Exam.findById(a.exam).select('maxWarnings proctoringEnabled');
+  const exam = await Exam.findById(a.exam).select('maxWarnings proctoringEnabled').lean();
   const max = exam?.maxWarnings ?? 3;
 
   if (a.status !== 'In Progress') {
@@ -159,12 +240,55 @@ exports.violation = async (req, res) => {
   }
 
   // Collapse the blur + visibilitychange pair of a single tab switch.
-  const last = a.violations?.[a.violations.length - 1];
-  if (last?.at && Date.now() - new Date(last.at).getTime() < 1500) {
-    return res.json({ counted: false, duplicate: true, count: a.violationCount, max, remaining: Math.max(0, max - a.violationCount), finished: false });
-  }
+  // const last = a.violations?.[a.violations.length - 1];
+  // if (last?.at && Date.now() - new Date(last.at).getTime() < 1500) {
+  //   return res.json({ counted: false, duplicate: true, count: a.violationCount, max, remaining: Math.max(0, max - a.violationCount), finished: false });
+  // }
 
-  const kind = ['TAB_HIDDEN', 'WINDOW_BLUR'].includes(req.body?.kind) ? req.body.kind : 'OTHER';
+const ALLOWED_VIOLATIONS = [
+  'TAB_HIDDEN',
+  'WINDOW_BLUR',
+  'FACE_NOT_DETECTED',
+  'MULTIPLE_FACES',
+  'HEAD_DIRECTION_AWAY',
+];
+
+const kind = ALLOWED_VIOLATIONS.includes(req.body?.kind)
+  ? req.body.kind
+  : 'OTHER';
+
+const last = a.violations?.[a.violations.length - 1];
+
+const isFocusDuplicate =
+  ['TAB_HIDDEN', 'WINDOW_BLUR'].includes(kind) &&
+  ['TAB_HIDDEN', 'WINDOW_BLUR'].includes(last?.kind);
+if (
+  isFocusDuplicate &&
+  last?.at &&
+  Date.now() - new Date(last.at).getTime() < 1500
+) {
+  return res.json({
+    counted: false,
+    duplicate: true,
+    count: a.violationCount,
+    max,
+    remaining: Math.max(0, max - a.violationCount),
+    finished: false
+  });
+}
+
+  // const kind = ['TAB_HIDDEN', 'WINDOW_BLUR'].includes(req.body?.kind) ? req.body.kind : 'OTHER';
+//   const ALLOWED_VIOLATIONS = [
+//   'TAB_HIDDEN',
+//   'WINDOW_BLUR',
+//   'FACE_NOT_DETECTED',
+//   'MULTIPLE_FACES',
+//   'HEAD_DIRECTION_AWAY',
+// ];
+
+// const kind = ALLOWED_VIOLATIONS.includes(req.body?.kind)
+//   ? req.body.kind
+//   : 'OTHER';
   const upd = await Attempt.findOneAndUpdate(
     { _id: a._id, status: 'In Progress' },
     {
@@ -185,7 +309,7 @@ exports.violation = async (req, res) => {
 // The candidate's own score, only when the exam allows it (exam.showResultToCandidate).
 exports.result = async (req, res) => {
   const a = req.examAttempt;
-  const exam = await Exam.findById(a.exam).select('showResultToCandidate maximumMarks passingMarks');
+  const exam = await Exam.findById(a.exam).select('showResultToCandidate maximumMarks passingMarks').lean();
   if (!exam?.showResultToCandidate) return res.json({ visible: false });
   if (!FINAL.includes(a.status)) return res.json({ visible: true, ready: false, state: 'in_progress' });
   if (a.evaluationPending) {
@@ -204,6 +328,6 @@ exports.submit = async (req, res) => {
   if (a.status === 'Registered') return res.status(409).json({ message: 'The examination has not been started' });
   const expired = a.status === 'In Progress' && isExpired(a);
   const r = await finalizeAttempt(a, { auto: expired, reason: expired ? 'TIME_EXPIRED' : null });
-  const candidate = await Candidate.findById(r.candidate).select('candidateId');
+  const candidate = await Candidate.findById(r.candidate).select('candidateId').lean();
   res.json({ message: 'Examination received', candidateId: candidate?.candidateId, ...finalState(r) });
 };

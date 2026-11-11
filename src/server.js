@@ -23,6 +23,9 @@ const examResultRoutes = require('./routes/examResults');
 const { startExamJobs } = require('./services/exam/examScheduler');
 
 const isProd = process.env.NODE_ENV === 'production';
+if (isProd && !process.env.CORS_ORIGIN) {
+  process.stderr.write('WARNING: CORS_ORIGIN is not set; any origin may call this API. Set it to the portal origin(s).\n');
+}
 
 const app = express();
 
@@ -55,6 +58,9 @@ app.use(
 );
 
 app.use(compression());
+// Candidate exam traffic (answers, proctoring events) is tiny; a small cap rejects abuse early.
+// Mounted first: body-parser skips a request whose body is already parsed.
+app.use('/api/exam/attempts', express.json({ limit: process.env.EXAM_ATTEMPT_BODY_LIMIT || '64kb' }));
 app.use(express.json({ limit: '2mb' }));
 app.use('/api/bench/import', express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '2mb' }));
@@ -170,6 +176,21 @@ connectDB()
     startAlertJob();
     startAutomationJob();
     startExamJobs();
+    // Optional load-test telemetry: set LOG_EVENT_LOOP=1 to log event-loop delay + memory once a minute (JSON line).
+    if (process.env.LOG_EVENT_LOOP === '1') {
+      const { monitorEventLoopDelay } = require('perf_hooks');
+      const h = monitorEventLoopDelay({ resolution: 20 });
+      h.enable();
+      setInterval(() => {
+        const m = process.memoryUsage();
+        require('./utils/logger').info('runtime', {
+          eventLoopDelayMs: { mean: +(h.mean / 1e6).toFixed(2), p99: +(h.percentile(99) / 1e6).toFixed(2), max: +(h.max / 1e6).toFixed(2) },
+          rssMB: Math.round(m.rss / 1048576), heapUsedMB: Math.round(m.heapUsed / 1048576),
+          mongoPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE || process.env.MONGO_POOL_SIZE || 20),
+        });
+        h.reset();
+      }, 60000).unref();
+    }
     const server = app.listen(PORT);
     logSystem('info', 'server', `Server started (Node ${process.version}, pid ${process.pid})`);
 
@@ -185,6 +206,7 @@ connectDB()
       server.close(() => {
         mongoose.connection.close(false).finally(() => process.exit(0));
       });
+      server.closeIdleConnections?.(); // don't wait on idle keep-alive sockets
       setTimeout(() => process.exit(1), 10000).unref();
     };
     process.on('SIGTERM', shutdown);
