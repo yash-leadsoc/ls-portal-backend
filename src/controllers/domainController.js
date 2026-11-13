@@ -2,11 +2,75 @@ const Domain = require('../models/Domain');
 const { logAudit } = require('../utils/audit');
 const { buOf, seesAll, ownerScope, contentFilter } = require('../utils/scope');
 const { moveToTrash, archiveToTrash } = require('../utils/trash');
+// exports.list = async (req, res) => {
+//   try {
+//     const q = { active: true };
+//     if (!seesAll(req.user)) q.businessUnit = contentFilter(req.user);
+//     const domains = await Domain.find(q).populate('category', 'name').sort({ name: 1 });
+
+//     if (
+//       req.user.role === 'admin' ||
+//       req.user.role === 'cto' ||
+//       req.user.role === 'bu' ||
+//       req.user.role === 'manager'
+//     ) {
+//       return res.json({
+//         domains: domains.map((domain) => {
+//           const o = domain.toObject();
+//           return { ...o, categoryName: o.category?.name || null, category: o.category?._id || o.category || null, assigned: true };
+//         }),
+//       });
+//     }
+
+//     const assignedDomainIds = (
+//       req.user.assignedDomains || []
+//     ).map((domain) =>
+//       String(domain?._id || domain)
+//     );
+
+//     const result = domains.map((domain) => {
+//       const o = domain.toObject();
+//       return {
+//         ...o,
+//         categoryName: o.category?.name || null,
+//         category: o.category?._id || o.category || null,
+//         assigned: assignedDomainIds.includes(String(domain._id)),
+//       };
+//     });
+
+//     return res.json({
+//       domains: result,
+//     });
+//   } catch (error) {
+//     return res.status(500).json({
+//       message: 'Failed to load domains',
+//     });
+//   }
+// };
+
 exports.list = async (req, res) => {
   try {
+    // ids of domains explicitly assigned to this user (employees)
+    const assignedDomainIds = (req.user.assignedDomains || []).map((domain) =>
+      String(domain?._id || domain)
+    );
+
     const q = { active: true };
-    if (!seesAll(req.user)) q.businessUnit = contentFilter(req.user);
-    const domains = await Domain.find(q).populate('category', 'name').sort({ name: 1 });
+
+    if (!seesAll(req.user)) {
+      const scopeCond = { businessUnit: contentFilter(req.user) };
+
+      if (req.user.role === 'employee' && assignedDomainIds.length) {
+        // BU-scoped domains OR any domain explicitly assigned to the employee
+        q.$or = [scopeCond, { _id: { $in: assignedDomainIds } }];
+      } else {
+        q.businessUnit = scopeCond.businessUnit;
+      }
+    }
+
+    const domains = await Domain.find(q)
+      .populate('category', 'name')
+      .sort({ name: 1 });
 
     if (
       req.user.role === 'admin' ||
@@ -17,16 +81,15 @@ exports.list = async (req, res) => {
       return res.json({
         domains: domains.map((domain) => {
           const o = domain.toObject();
-          return { ...o, categoryName: o.category?.name || null, category: o.category?._id || o.category || null, assigned: true };
+          return {
+            ...o,
+            categoryName: o.category?.name || null,
+            category: o.category?._id || o.category || null,
+            assigned: true,
+          };
         }),
       });
     }
-
-    const assignedDomainIds = (
-      req.user.assignedDomains || []
-    ).map((domain) =>
-      String(domain?._id || domain)
-    );
 
     const result = domains.map((domain) => {
       const o = domain.toObject();
