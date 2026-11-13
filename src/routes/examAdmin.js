@@ -8,6 +8,8 @@ const c = require('../controllers/exam/candidateController');
 const a = require('../controllers/exam/analyticsController');
 const x = require('../controllers/exam/exportController');
 const proctoring = require('./examProctoring');
+const excelUpload = require('../middleware/examExcelUpload');
+const excelImport = require('../controllers/exam/excelImportController');
 
 router.use(requireExamAdmin);
 
@@ -23,6 +25,14 @@ router.patch('/exams/:id/status', e.status);
 
 router.get('/exams/:examId/sets', s.list);
 router.post('/exams/:examId/sets', s.create);
+
+router.post(
+  '/exams/:examId/import-excel',
+  excelUpload.single('file'),
+  excelImport.importExcel
+);
+
+
 router.get('/sets/:id', s.get);
 router.put('/sets/:id', s.update);
 router.delete('/sets/:id', s.remove);
