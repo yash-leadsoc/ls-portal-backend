@@ -35,12 +35,54 @@ exports.listPublic = async (req, res) => {
   res.json(rows);
 };
 
+// exports.getPublic = async (req, res) => {
+//   const e = await Exam.findOne({ _id: req.params.id, ...availableFilter() }).select(
+//     'name description instructions category durationMinutes maximumMarks passingMarks startsAt endsAt proctoringEnabled maxWarnings aiProctoring.enabled aiProctoring.cameraRequired'
+//   ).lean();
+//   if (!e) return res.status(404).json({ message: 'Exam not available' });
+//   res.json(e);
+// };
+
 exports.getPublic = async (req, res) => {
-  const e = await Exam.findOne({ _id: req.params.id, ...availableFilter() }).select(
-    'name description instructions category durationMinutes maximumMarks passingMarks startsAt endsAt proctoringEnabled maxWarnings aiProctoring.enabled aiProctoring.cameraRequired'
-  ).lean();
-  if (!e) return res.status(404).json({ message: 'Exam not available' });
-  res.json(e);
+  const e = await Exam.findOne({
+    _id: req.params.id,
+    status: { $in: ['Scheduled', 'Live'] }
+  }).select(
+    'name description instructions category durationMinutes maximumMarks passingMarks startsAt endsAt status proctoringEnabled maxWarnings'
+  );
+
+  if (!e) {
+    return res.status(404).json({
+      message: 'This examination is unavailable.'
+    });
+  }
+
+  const now = new Date();
+
+  let availability = 'upcoming';
+
+  if (e.status === 'Paused') {
+    availability = 'paused';
+  } else if (e.endsAt && now > e.endsAt) {
+    availability = 'ended';
+  } else if (
+    e.status === 'Live' &&
+    (!e.startsAt || now >= e.startsAt)
+  ) {
+    availability = 'live';
+  } else if (
+    e.status === 'Scheduled' &&
+    e.startsAt &&
+    now >= e.startsAt
+  ) {
+    availability = 'live';
+  }
+
+  res.json({
+    ...e.toObject(),
+    availability,
+    serverTime: now
+  });
 };
 
 exports.list = async (req, res) => {

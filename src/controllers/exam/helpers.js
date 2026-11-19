@@ -21,12 +21,30 @@ exports.assignSet = async (examId) => {
 };
 
 // An exam is open to candidates when it is Live and inside its (optional) window.
+// exports.availableFilter = (now = new Date()) => ({
+//   status: 'Live',
+//   $and: [
+//     { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+//     { $or: [{ endsAt: null }, { endsAt: { $gte: now } }] },
+//   ],
+// });
+
 exports.availableFilter = (now = new Date()) => ({
-  status: 'Live',
+  status: { $in: ['Live', 'Scheduled'] },
   $and: [
-    { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
-    { $or: [{ endsAt: null }, { endsAt: { $gte: now } }] },
-  ],
+    {
+      $or: [
+        { startsAt: null },
+        { startsAt: { $lte: now } }
+      ]
+    },
+    {
+      $or: [
+        { endsAt: null },
+        { endsAt: { $gte: now } }
+      ]
+    }
+  ]
 });
 
 exports.pick = (obj = {}, keys) => {
