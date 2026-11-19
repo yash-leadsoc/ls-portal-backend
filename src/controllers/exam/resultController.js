@@ -8,7 +8,7 @@ async function resultRows(query) {
   const filter = {};
   if (query.exam) filter.exam = query.exam;
   let rows = await Result.find(filter)
-    .populate('candidate', 'candidateId name email phone')
+    .populate('candidate', 'candidateId name email phone interestedDomain')
     .populate('exam', 'name maximumMarks passingMarks')
     .populate('attempt', 'attemptId status violationCount autoSubmitted autoSubmitReason submittedAt startedAt aiEvaluation evaluationPending evaluations.source')
     .sort({ createdAt: -1 })
