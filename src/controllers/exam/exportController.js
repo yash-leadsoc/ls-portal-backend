@@ -6,10 +6,21 @@ const fmt = (d) => (d ? new Date(d).toISOString() : '');
 
 exports.candidates = async (req, res) => {
   const rows = await candidateRows(req.query);
-  const headers = ['candidateId', 'name', 'email', 'phone', 'exam', 'registered', 'attemptStatus', 'marks', 'violations'];
+ const headers = [
+  'candidateId',
+  'name',
+  'email',
+  'phone',
+  'interestedDomain',
+  'exam',
+  'registered',
+  'attemptStatus',
+  'marks',
+  'violations'
+];
   const data = rows.map((x) => ({
     candidateId: x.candidateId, name: x.name, email: x.email, phone: x.phone, exam: x.exam?.name,
-    registered: fmt(x.createdAt), attemptStatus: x.attempt?.status || '', marks: x.result?.obtainedMarks ?? '',
+    registered: fmt(x.createdAt), attemptStatus: x.attempt?.status || '', interestedDomain: x.interestedDomain || '', marks: x.result?.obtainedMarks ?? '',
     violations: x.attempt?.violationCount ?? '',
   }));
   res.type('text/csv').attachment('exam-candidates.csv').send(csv(data, headers));
