@@ -28,9 +28,12 @@ exports.candidates = async (req, res) => {
 
 exports.results = async (req, res) => {
   const rows = await resultRows(req.query);
-  const headers = ['rank', 'candidateId', 'name', 'email', 'exam', 'marks', 'maximumMarks', 'percentage', 'status', 'violations', 'autoSubmitted', 'submittedAt'];
+  const headers = ['rank', 'candidateId', 'name', 'email',  'phone',
+    'interestedDomain', 'exam', 'marks', 'maximumMarks', 'percentage', 'status', 'violations', 'autoSubmitted', 'submittedAt'];
   const data = rows.map((x) => ({
     rank: x.rank ?? '', candidateId: x.candidate?.candidateId, name: x.candidate?.name, email: x.candidate?.email,
+     phone: x.candidate?.phone || '',
+    interestedDomain: x.candidate?.interestedDomain || 'Not selected',
     exam: x.exam?.name, marks: x.obtainedMarks, maximumMarks: x.maximumMarks, percentage: Number(x.percentage || 0).toFixed(2),
     status: x.status, violations: x.attempt?.violationCount ?? 0,
     autoSubmitted: x.attempt?.autoSubmitted ? (x.attempt.autoSubmitReason || 'yes') : 'no', submittedAt: fmt(x.attempt?.submittedAt),
